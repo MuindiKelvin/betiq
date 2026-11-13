@@ -1,0 +1,23 @@
+name: sync-data
+on:
+  schedule:
+    - cron: "0 */6 * * *"      # full sync every 6 hours
+    - cron: "*/30 * * * *"     # users' queued requests (match details, player profiles): 0 calls when nothing is queued
+  workflow_dispatch:
+concurrency: sync-data
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - name: Sync
+        run: |
+          if [ "${{ github.event.schedule }}" = "*/30 * * * *" ]; then npm run sync -- --requests-only; else npm run sync; fi
+        env:
+          BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          MAX_REQUESTS: ${{ vars.MAX_REQUESTS || '3000' }}
