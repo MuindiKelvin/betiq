@@ -5,6 +5,11 @@ export const shortDate = (t) => new Date(t * 1000).toLocaleDateString(undefined,
 export const timeLabel = (t) => new Date(t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 export const dateTimeLabel = (t) => `${dayLabel(t)} · ${timeLabel(t)}`;
 
+// Upcoming matches in date order: drops finished and long-overdue "not started" entries, keeps live, postponed and cancelled ones (shown with a badge)
+export const upcoming = (list, now = Date.now() / 1000) => list
+  .filter((f) => f.t != null && f.s !== "finished" && (["postponed", "cancelled", "canceled", "inprogress"].includes(f.s) || f.t >= now - 3 * 3600))
+  .sort((a, b) => a.t - b.t || a.id - b.id);
+
 export function groupByDay(list) {
   const g = new Map();
   for (const m of list) { const k = dayLabel(m.t); if (!g.has(k)) g.set(k, []); g.get(k).push(m); }

@@ -93,7 +93,7 @@ const LIVE = { inprogress: ["danger", "Live"], postponed: ["warning", "Postponed
 export function MatchRow({ m, byId, onOpen }) {
   const st = LIVE[m.s], H = byId[m.h], A = byId[m.a];
   return (
-    <button type="button" className="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3" title={m.hg != null ? "View match" : "Analyze match"} onClick={() => onOpen({ h: m.h, a: m.a, league: m.league ?? H?.league, id: m.id, t: m.t, hg: m.hg, ag: m.ag })}>
+    <button type="button" className="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3" title="Open match" onClick={() => onOpen({ h: m.h, a: m.a, league: m.league ?? H?.league, id: m.id, t: m.t, hg: m.hg, ag: m.ag, s: m.s, r: m.r, rn: m.rn, g: m.g })}>
       <span className="side d-flex align-items-center justify-content-end gap-2 text-end"><span className="fw-medium text-truncate">{H?.name ?? "?"}</span><Crest team={H} /></span>
       <span className="match-mid text-center">
         {st ? <Badge bg={st[0]}>{st[1]}</Badge> : m.hg != null ? <span className="score">{m.hg}–{m.ag}</span> : <span className="small text-body-secondary">{timeLabel(m.t)}</span>}

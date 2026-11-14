@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Row, Table } from "react-bootstrap";
 import { loadLeaders, loadStandings, loadTransfers, useDoc, useLeague } from "../lib/data";
-import { first, fmtVal, standings } from "../lib/util";
+import { first, fmtVal, standings, upcoming } from "../lib/util";
 import DataTable from "../components/DataTable";
 import { Crest, Days, FormChips, Load, MatchList, Pager, PlayerPhoto, SearchBox, Spin, Stat, hit, usePaged } from "../components/ui";
 
@@ -55,7 +55,7 @@ export function TableTab({ code, comp, byId, nav }) {
 /* ---------- matches ---------- */
 export function MatchesTab({ code, comp, byId, nav }) {
   const lg = useLeague(code);
-  return <Load s={lg}>{(r) => <MatchList key={code} fixtures={tagged(comp.fixtures, code)} results={tagged(resultsOf(r, comp.meta), code)} byId={byId} onOpen={nav.open} />}</Load>;
+  return <Load s={lg}>{(r) => <MatchList key={code} fixtures={tagged(upcoming(comp.fixtures), code)} results={tagged(resultsOf(r, comp.meta), code)} byId={byId} onOpen={nav.open} />}</Load>;
 }
 
 /* ---------- teams ---------- */
@@ -135,7 +135,7 @@ export function TransfersTab({ code, nav }) {
 /* ---------- overview ---------- */
 export function OverviewTab({ code, comp, byId, nav, setTab }) {
   const lg = useLeague(code), st = useDoc(() => loadStandings(code), code), ld = useDoc(() => loadLeaders(code), code);
-  const next = tagged(comp.fixtures.filter((f) => f.s === "notstarted" || f.s === "inprogress"), code).slice(0, 5);
+  const next = tagged(upcoming(comp.fixtures).filter((f) => f.s === "notstarted" || f.s === "inprogress"), code).slice(0, 5);
   const tableRows = st.data?.rows?.length ? st.data.rows.slice(0, 6) : st.data?.groups?.[0]?.rows.slice(0, 4) ?? [];
   return (
     <Row className="g-3">
