@@ -21,3 +21,4 @@ jobs:
           BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           MAX_REQUESTS: ${{ vars.MAX_REQUESTS || '3000' }}
+# refresh
