@@ -1,24 +1,35 @@
 name: live-runner
-# Keeps live scores and "has it started?" fresh. Each run checks /coverage/ (free); if nothing is live or due before the next run it exits at once.
-# Otherwise it polls /events/live/ every LIVE_POLL_SECONDS for ~19 minutes, then the next scheduled run takes over.
-# NOTE: GitHub bills Actions minutes. Public repositories are free; on a private repository the free allowance (2,000 min/month) is not enough for
-# all-day live polling. In that case leave this workflow disabled and run `npm run live:local` on an always-on machine instead.
+# Self-restarting live runner. Each run queues the next one as its first step, so there is always one running and one waiting.
+# The cron is only a safety net in case the chain is ever broken (GitHub drops many scheduled runs, so it cannot be the main trigger).
+# Public repositories only: Actions minutes are free there. A private repo would run out of free minutes within a day.
 on:
   schedule:
-    - cron: "*/20 * * * *"
+    - cron: "*/15 * * * *"
   workflow_dispatch:
 concurrency:
   group: live-runner
-  cancel-in-progress: false
+  cancel-in-progress: false      # the queued run waits for this one to finish; it is never cancelled mid-run
+permissions:
+  contents: read
+  actions: write                 # lets the run queue its successor
 jobs:
   live:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
+      - name: Note start time
+        run: echo "T0=$(date +%s)" >> "$GITHUB_ENV"
+
+      - name: Queue the next run first (so the chain survives a failure here)
+        run: gh workflow run live.yml --repo "${{ github.repository }}" --ref "${{ github.ref_name }}"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
       - run: npm install
+
       - name: Live runner
         run: npm run live
         env:
@@ -26,5 +37,11 @@ jobs:
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
           LIVE_RUN_MINUTES: "19"
           LIVE_EXIT_IDLE: "1"
-          LIVE_REVISIT_MINUTES: "25"
+          LIVE_REVISIT_MINUTES: "6"
           LIVE_POLL_SECONDS: ${{ vars.LIVE_POLL_SECONDS || '30' }}
+
+      - name: Pace (when idle the runner exits in seconds; hold the slot so runs start at least 5 min apart)
+        if: always()
+        run: |
+          E=$(( $(date +%s) - T0 ))
+          if [ "$E" -lt 300 ]; then sleep $(( 300 - E )); fi
