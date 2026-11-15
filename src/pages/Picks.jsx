@@ -1,35 +1,24 @@
-import { useEffect, useState } from "react";
-import { collection, deleteDoc, doc, getDocs, orderBy, query } from "firebase/firestore";
+import { useEffect, useMemo, useState } from "react";
+import { deleteDoc, doc } from "firebase/firestore";
 import { Alert, Badge, Button, Card, Col, ListGroup, Row } from "react-bootstrap";
 import { db } from "../lib/firebase";
-import { loadResults } from "../lib/data";
-import { MARKETS, groupByDay, pct, pickLabel, pickMarket, settle } from "../lib/util";
+import { loadPicks } from "../lib/picks";
+import { pickWithLive } from "../lib/pickstate";
+import { minuteLabel, phaseOf } from "../lib/phase";
+import { useLive } from "../lib/useLive";
+import { MARKETS, groupByDay, pct, pickLabel, pickMarket } from "../lib/util";
 import { Pager, SearchBox, Spin, Stat, hit, usePaged } from "../components/ui";
 
 const money = (x) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2);
 
 export default function Picks({ user, d, history }) {
-  const [rows, setRows] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState("");
-  useEffect(() => {
-    (async () => {
-      try {
-        const s = await getDocs(query(collection(db, "users", user.uid, "picks"), orderBy("createdAt", "desc")));
-        const raw = s.docs.map((x) => ({ id: x.id, ...x.data() }));
-        const codes = [...new Set(raw.filter((p) => p.v === 3 && p.matchId).map((p) => p.league))];
-        const data = Object.fromEntries(await Promise.all(codes.map(async (c) => [c, await loadResults(c).catch(() => null)])));
-        const out = raw.map((p) => {
-          p.t = p.kickoff ?? p.createdAt?.seconds ?? Math.floor(Date.now() / 1000);
-          const r = p.v === 3 && p.matchId ? data[p.league]?.results.find((x) => x.id === p.matchId) : null;
-          if (r) { p.score = `${r.hg}–${r.ag}`; Object.assign(p, settle(p, r.hg, r.ag)); }
-          return p;
-        });
-        setRows(out.sort((x, y) => y.t - x.t));
-      } catch (e) { setErr(e.message); }
-    })();
-  }, [user, d]);
+  const [saved, setSaved] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState(""), { doc: liveDoc, finals, nowMs } = useLive();
+  // The live feed settles a pick the moment the API reports its match finished (no waiting for the data sync); a synced result, once present, wins.
+  const rows = useMemo(() => saved && saved.map((p) => pickWithLive(p, p.v === 3 && p.matchId ? phaseOf({ id: p.matchId, t: p.t }, liveDoc, nowMs, finals) : null)), [saved, liveDoc, finals, nowMs]);
+  useEffect(() => { loadPicks(user.uid).then(setSaved).catch((e) => setErr(e.message)); }, [user, d]);
 
   async function remove(id) {
-    try { await deleteDoc(doc(db, "users", user.uid, "picks", id)); setRows((r) => r.filter((p) => p.id !== id)); } catch (e) { setErr(e.message); }
+    try { await deleteDoc(doc(db, "users", user.uid, "picks", id)); setSaved((r) => r.filter((p) => p.id !== id)); } catch (e) { setErr(e.message); }
   }
   const all = rows ?? [], done = all.filter((r) => r.won != null), won = (l) => l.filter((r) => r.won).length;
   const staked = done.filter((r) => r.profit != null), stakedSum = staked.reduce((s, r) => s + r.stake, 0), profit = staked.reduce((s, r) => s + r.profit, 0);
@@ -52,7 +41,7 @@ export default function Picks({ user, d, history }) {
               <ListGroup.Item key={k} className="d-flex align-items-center gap-3"><span className="flex-fill">{name(k)}</span><span className="small text-body-secondary">{won(l)}/{l.length}</span><strong>{pct(won(l) / l.length)}</strong></ListGroup.Item>))}</ListGroup></Card></Col>))}
         </Row>)}
       {base.length > 0 && <SearchBox value={q} onChange={setQ} placeholder="Search team, league or pick" style={{ maxWidth: 340 }} />}
-      {rows && !shown.length && <Alert variant="secondary" className="mb-0">{base.length ? "No picks match your search." : history ? "No settled picks yet. A pick settles after the match is played and the next data sync has run." : "No picks yet. Analyze a match and tap “Save to My Picks”."}</Alert>}
+      {rows && !shown.length && <Alert variant="secondary" className="mb-0">{base.length ? "No picks match your search." : history ? "No settled picks yet. A pick settles as soon as its match is reported finished." : "No picks yet. Analyze a match and tap “Save to My Picks”."}</Alert>}
       {groupByDay(pg.slice).map(([label, items]) => (
         <div key={label}>
           <div className="small fw-semibold text-body-secondary mb-2 px-1">{label}</div>
@@ -65,7 +54,10 @@ export default function Picks({ user, d, history }) {
               <div className="text-end"><div>{pickLabel(r)}</div><div className="small text-body-secondary">{MARKETS[pickMarket(r)]?.label}{r.prob != null && ` · ${pct(r.prob)}`}</div></div>
               {r.odds && <div className="text-end small"><div>@ {r.odds.toFixed(2)}</div>{r.stake && <div className="text-body-secondary">stake {r.stake}</div>}</div>}
               <div className="text-end" style={{ minWidth: 130 }}>
-                {r.won != null ? <><Badge bg={r.won ? "success" : "danger"}>{r.score} · {r.won ? "Won" : "Lost"}</Badge>{r.profit != null && <div className={"small " + (r.profit >= 0 ? "text-success" : "text-danger")}>{money(r.profit)}</div>}</>
+                {r.won != null ? <><Badge bg={r.won ? "success" : "danger"}>{r.score} · FT · {r.won ? "Won" : "Lost"}</Badge>{r.profit != null && <div className={"small " + (r.profit >= 0 ? "text-success" : "text-danger")}>{money(r.profit)}</div>}</>
+                  : r.live ? <><Badge bg="danger" className={r.liveStale ? "opacity-50" : ""}>{minuteLabel(r.live.min) ?? "Live"} · {r.live.hg ?? "–"}–{r.live.ag ?? "–"}</Badge><div className="tiny text-body-secondary">in play</div></>
+                  : r.wait === "overdue" || r.wait === "left" ? <><Badge bg="warning" text="dark">Awaiting result</Badge><div className="tiny text-body-secondary">kick-off passed</div></>
+                  : r.wait ? <Badge bg="warning" text="dark">{r.wait === "postponed" ? "Postponed" : r.wait === "cancelled" ? "Cancelled" : r.raw ?? "Disrupted"}</Badge>
                   : <Badge bg="secondary">{r.v !== 3 ? "Not tracked" : r.matchId ? "Pending" : "No fixture"}</Badge>}
               </div>
               <Button size="sm" variant="link" className="text-body-secondary p-0" aria-label="Delete pick" onClick={() => remove(r.id)}><i className="bi bi-trash" /></Button>

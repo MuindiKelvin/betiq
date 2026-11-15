@@ -1,7 +1,7 @@
 {
   "name": "betiq",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +13,14 @@
     "sync:window": "node --env-file=.env scripts/sync.mjs",
     "sync:requests": "node --env-file=.env scripts/sync.mjs --requests-only",
     "sync:dry": "DRY_RUN=1 node --env-file=.env scripts/sync.mjs",
-    "test": "node scripts/dev/test-model.mjs && node scripts/dev/test-bsd.mjs"
+    "test": "node scripts/dev/test-model.mjs && node scripts/dev/test-bsd.mjs && node scripts/dev/test-value.mjs && node scripts/dev/test-live.mjs && node scripts/dev/test-board.mjs",
+    "live": "node scripts/live.mjs",
+    "live:local": "node --env-file=.env scripts/live.mjs",
+    "probe:live": "node --env-file=.env scripts/probe-live.mjs",
+    "test:live-run": "node scripts/dev/test-live-run.mjs",
+    "start": "node scripts/daemon.mjs",
+    "schedule": "node scripts/schedule.mjs",
+    "schedule:local": "node --env-file=.env scripts/schedule.mjs"
   },
   "dependencies": {
     "bootstrap": "^5.3.3",

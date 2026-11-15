@@ -1,0 +1,30 @@
+name: live-runner
+# Keeps live scores and "has it started?" fresh. Each run checks /coverage/ (free); if nothing is live or due before the next run it exits at once.
+# Otherwise it polls /events/live/ every LIVE_POLL_SECONDS for ~19 minutes, then the next scheduled run takes over.
+# NOTE: GitHub bills Actions minutes. Public repositories are free; on a private repository the free allowance (2,000 min/month) is not enough for
+# all-day live polling. In that case leave this workflow disabled and run `npm run live:local` on an always-on machine instead.
+on:
+  schedule:
+    - cron: "*/20 * * * *"
+  workflow_dispatch:
+concurrency:
+  group: live-runner
+  cancel-in-progress: false
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - name: Live runner
+        run: npm run live
+        env:
+          BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          LIVE_RUN_MINUTES: "19"
+          LIVE_EXIT_IDLE: "1"
+          LIVE_REVISIT_MINUTES: "25"
+          LIVE_POLL_SECONDS: ${{ vars.LIVE_POLL_SECONDS || '30' }}

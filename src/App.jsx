@@ -13,6 +13,9 @@ import Team from "./pages/Team";
 import Player from "./pages/Player";
 import Picks from "./pages/Picks";
 import Model from "./pages/Model";
+import Calibration from "./pages/Calibration";
+import Live from "./pages/Live";
+import { LiveProvider } from "./lib/useLive";
 import MatchView from "./pages/MatchView";
 import Profile from "./pages/Profile";
 import Help from "./pages/Help";
@@ -84,6 +87,8 @@ export default function App() {
     competitions: comp ? <Competition key={comp} d={d} code={comp} tab={compTab} setTab={setCompTab} nav={nav} onBack={() => setComp(null)} /> : <Competitions d={d} nav={nav} />,
     analyze: <Analyze key={pre ? `${pre.h}-${pre.a}-${pre.league}` : "new"} user={user} d={{ ...d, compCode: comp }} pre={pre} />,
     model: <Model d={d} />,
+    live: <Live d={d} nav={nav} />,
+    calibration: <Calibration user={user} />,
     profile: <Profile user={user} d={d} onSignOut={out} />,
     help: <Help />,
   }[tab] ?? <Picks key={tab} user={user} d={d} history={tab === "history"} />);
@@ -93,7 +98,7 @@ export default function App() {
   const shell = { tab, onSelect: go, user, onSignOut: out };
 
   return (
-    <>
+    <LiveProvider>
       <Backdrop />
       <aside className="sidebar d-none d-lg-flex"><SideNav {...shell} /></aside>
       <MobileNav show={menu} onHide={() => setMenu(false)} {...shell} />
@@ -116,6 +121,6 @@ export default function App() {
           <Credit className="text-center mt-1" />
         </Container>
       </div>
-    </>
+    </LiveProvider>
   );
 }

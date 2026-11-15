@@ -60,3 +60,52 @@ not advice. 18+, bet responsibly.
 
 ---
 © BetIQ. All rights reserved. Developed by: [muindikelvin.github.io](https://muindikelvin.github.io)
+
+## Live scores and kick-off detection
+
+The **Live** tab and the badges on match rows (red minute and score, amber *Kick-off passed*, *Rescheduled*, *Postponed*) come from a small runner that writes one Firestore document, `live/main`, which every browser listens to. The BSD token stays in the runner and never reaches the browser.
+
+```bash
+npm run probe:live     # prints the REAL shape of /events/live/ and /fixtures/changes/ (2-4 calls). Run it while a match is in play.
+npm run live:local     # runs until stopped (PC or small server)
+npm run test:live-run  # end-to-end test of the runner against a mock server
+```
+
+Then deploy the rules once (they now allow reading `live`): `npx firebase-tools deploy --only firestore`.
+
+- **What it spends:** `/coverage/` needs no token, so nothing is spent while nothing is live or due. While matches are live: one `/events/live/` call per tick (default 30 s, `LIVE_POLL_SECONDS`), one `/fixtures/changes/` call every 5 minutes, and one `/events/{id}/` call for each match that leaves the live feed. It stops when `LIVE_RESERVE` (1000) calls remain today so the data sync keeps working.
+- **No guessing:** a match is *Live* only if the live feed lists it. Matches that disappear are looked up (`/events/{id}/`) and their status is stored as the API reports it. Minutes are shown as reported, not counted locally. If the feed is delayed, stopped or out of quota, the app says so. Extra time and penalties are shown separately from the 90-minute score, as the API reports them.
+- **Time zones:** the started/not-started decision compares absolute instants; your time zone only changes how times are displayed.
+- **GitHub Actions:** `.github/workflows/live.yml` runs it every 20 minutes (free on public repositories; on private ones prefer `npm run live:local` on an always-on machine). The WebSocket (individual actions, ball position) is a paid BSD add-on and is not used.
+
+## Live page, FT labels and instant pick results (v0.5)
+
+- **Live page = FotMob style.** Pick a day (strip, arrows or calendar); matches are grouped by competition (the most used competitions first, then international, then by country A-Z) and sorted by kick-off. Chips: All, Live, FT, Upcoming. While matches are in play the page opens on **Live** (every match in play now, whatever its date); otherwise on today. Days come from `schedule/<UTC day>` documents (built from the data sync, 0 API calls), overlaid with the live feed, so a day costs at most 3 Firestore reads.
+- **FT** is shown for every finished match (lists, Live page, match page, My Picks). Scores are 90-minute scores; extra time and penalties are listed under them.
+- **My Picks settle as soon as the API reports the match finished.** The runner looks up every match that leaves the live feed and keeps the confirmed result for 4 days in `live/finals`. My Picks listens to the live feed, so a pick turns Won/Lost on screen without a reload, and shows the minute and score while the match is in play. A result from the data sync, once present, always wins. A "sweep" (every ~2 min, max `SWEEP_MAX_PER_DAY`=400 lookups/day) also looks up matches in the stored schedule that kicked off 110 min to 12 h ago and were never reported finished (feed gap, runner restarted).
+- Honest limits: the app can only be as fast as the API's own feed. A result is shown after the API marks the match finished (typically within a minute of the runner seeing it leave the feed). If the API gives no score, nothing is guessed: the pick stays "Awaiting result".
+
+## Deploy and run on its own
+
+One-time, on your computer (replace `YOUR_PROJECT_ID`):
+```bash
+npm install
+npx firebase-tools login
+npm run build
+npx firebase-tools deploy --only firestore,hosting --project YOUR_PROJECT_ID   # rules (now incl. schedule) + the website
+npm run sync:local          # first data load (repeat on later days until all competitions are loaded; see "What the sync does")
+npm run schedule:local      # builds the day-by-day schedule for the Live page (0 API calls)
+```
+The website is static (Firebase Hosting) and is always up. The three jobs that keep the data fresh run inside **one process**, `npm start` (`scripts/daemon.mjs`): the live runner (always on, restarted if it crashes, sleeps until 00:00 UTC when the daily quota is used up), queued requests every 2 min (0 API calls when idle) and a full sync + schedule rebuild every 6 h. Run it on any always-on machine (a VPS, a Raspberry Pi, a PC that stays on). It needs `.env` and `serviceAccountKey.json` in the project folder (never commit them).
+```bash
+sudo npm install -g pm2
+cd /path/to/betiq                      # must be run from the project folder
+pm2 start npm --name betiq -- start    # start it
+pm2 save                               # remember it
+pm2 startup                            # prints one command: run exactly that (sudo) so it also starts after a reboot
+```
+Day to day: `pm2 status` · `pm2 logs betiq` · `pm2 restart betiq` · `pm2 stop betiq`.
+After you change the code: `git pull && npm install && npm run build && npx firebase-tools deploy --only firestore,hosting --project YOUR_PROJECT_ID && pm2 restart betiq`.
+Options (put in `.env`): `SYNC_EVERY_HOURS` (6), `REQUESTS_EVERY_SECONDS` (120), `LIVE_POLL_SECONDS` (30), `SWEEP_MAX_PER_DAY` (400), `LIVE_SWEEP=0` (no sweep), `SCHEDULE_BACK_DAYS` (7), `SCHEDULE_AHEAD_DAYS` (14).
+
+**Use only one runner.** If the daemon runs, disable the GitHub workflows so two runners do not write the same documents: `gh workflow disable live-runner && gh workflow disable sync-data` (or Actions tab > each workflow > Disable). Without a server you can use the workflows instead (the sync one now also rebuilds the schedule), but GitHub's cron is not exact (runs can start late) and live updates then arrive in 20-minute chunks.

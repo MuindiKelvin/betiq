@@ -5,6 +5,8 @@ import { db } from "../lib/firebase";
 import { fresh, loadResults, useComp } from "../lib/data";
 import { analyze } from "../lib/analysis";
 import { dayLabel, upcoming } from "../lib/util";
+import { phaseOf, preMatchLock } from "../lib/phase";
+import { useLive } from "../lib/useLive";
 import AnalysisView from "../components/AnalysisView";
 import CompSelect from "../components/CompSelect";
 import { Days, Load, Pager, SearchBox, Spin, TeamSelect, hit, usePaged } from "../components/ui";
@@ -30,6 +32,7 @@ function Fixtures({ fixtures, byId, onOpen }) {
 export default function Analyze({ user, d, pre }) {
   const [code, setCode] = useState(pre?.league ?? d.compCode ?? d.entries[0]?.code);
   const [h, setH] = useState(pre?.h ?? null), [a, setA] = useState(pre?.a ?? null);
+  const { doc: liveDoc, nowMs } = useLive();
   const [out, setOut] = useState(null), [h2hInfo, setH2h] = useState(null), [msg, setMsg] = useState(null), [busy, setBusy] = useState(false), [saved, setSaved] = useState(false);
   const s = useComp(code), comp = d.byCode[code];
   const byId = useMemo(() => { const m = { ...d.byId }; for (const t of s.data?.teams ?? []) m[t.id] = { ...t, league: code }; return m; }, [d.byId, s.data, code]);
@@ -57,11 +60,13 @@ export default function Analyze({ user, d, pre }) {
     } catch (e) { setMsg({ type: "danger", text: "Analysis failed: " + e.message }); }
     setBusy(false);
   }
+  const phase = out?.fx ? phaseOf(out.fx, liveDoc, nowMs) : null, lock = preMatchLock(phase);
   async function save(pick) {
+    if (lock) { setMsg({ type: "danger", text: lock }); return; }
     try {
       const { H, A, fx } = out;
-      await addDoc(collection(db, "users", user.uid, "picks"), { v: 3, matchId: fx?.id ?? null, kickoff: fx?.t ?? null, league: code, homeId: H.id, awayId: A.id, home: H.name, away: A.name,
-        market: pick.market, selection: pick.selection, prob: pick.prob, odds: pick.odds, stake: pick.stake, createdAt: serverTimestamp() });
+      await addDoc(collection(db, "users", user.uid, "picks"), { v: 3, matchId: fx?.id ?? null, kickoff: phase?.t ?? fx?.t ?? null, league: code, homeId: H.id, awayId: A.id, home: H.name, away: A.name,
+        market: pick.market, selection: pick.selection, prob: pick.prob, odds: pick.odds, stake: pick.stake, myProb: pick.myProb ?? null, mktProb: pick.mktProb ?? null, createdAt: serverTimestamp() });
       setSaved(true);
     } catch (e) { setMsg({ type: "danger", text: "Could not save: " + e.message }); }
   }
@@ -91,7 +96,7 @@ export default function Analyze({ user, d, pre }) {
       </Card.Body></Card>
       {msg && <Alert variant={msg.type} className="mb-0">{msg.text}</Alert>}
       {busy && <Spin />}
-      {out && <AnalysisView out={out} fx={out.fx} byId={byId} onSave={save} saved={saved} h2hInfo={h2hInfo} onRequestH2H={requestH2H} details={out.details} />}
+      {out && <AnalysisView out={out} fx={out.fx} byId={byId} onSave={save} saved={saved} locked={lock} h2hInfo={h2hInfo} onRequestH2H={requestH2H} details={out.details} />}
       {!out && !busy && s.data && (fixtures.length ? <Fixtures fixtures={fixtures} byId={byId} onOpen={openFx} /> : <Alert variant="info">No upcoming fixtures in this competition right now. You can still pick any two teams above.</Alert>)}
     </div>
   );

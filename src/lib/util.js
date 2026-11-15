@@ -3,6 +3,8 @@ export const pct = (x, d = 0) => (x == null || Number.isNaN(x) ? "n/a" : (x * 10
 export const dayLabel = (t) => new Date(t * 1000).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
 export const shortDate = (t) => new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "2-digit" });
 export const timeLabel = (t) => new Date(t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+export const tzAt = (t) => { try { return new Intl.DateTimeFormat(undefined, { timeZoneName: "short" }).formatToParts(new Date(t * 1000)).find((x) => x.type === "timeZoneName")?.value ?? ""; } catch { return ""; } };
+export const tzName = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } };
 export const dateTimeLabel = (t) => `${dayLabel(t)} · ${timeLabel(t)}`;
 
 // Upcoming matches in date order: drops finished and long-overdue "not started" entries, keeps live, postponed and cancelled ones (shown with a badge)

@@ -4,7 +4,9 @@ import { Alert, Badge, Button, Card, Nav, Table } from "react-bootstrap";
 import { db } from "../lib/firebase";
 import { fresh, loadMatchStats, useComp, useLeague } from "../lib/data";
 import { analyze } from "../lib/analysis";
-import { dateTimeLabel, shortDate } from "../lib/util";
+import { dateTimeLabel, shortDate, timeLabel, tzAt } from "../lib/util";
+import { describe, minuteLabel, preMatchLock, scoreText } from "../lib/phase";
+import { usePhase } from "../lib/useLive";
 import AnalysisView from "../components/AnalysisView";
 import EventsFeed from "../components/EventsFeed";
 import MatchStatsView from "../components/MatchStatsView";
@@ -20,21 +22,31 @@ const STATE = { inprogress: ["danger", "Live"], postponed: ["warning", "Postpone
 const rowOf = (st) => { const h = st?.h, a = st?.a; if (!h || !a) return null; const r = [h.total_shots, a.total_shots, h.shots_on_target, a.shots_on_target, h.corner_kicks, a.corner_kicks, h.fouls, a.fouls, h.yellow_cards, a.yellow_cards, h.red_cards, a.red_cards, h.ball_possession, a.ball_possession, h.xg, a.xg]; return r.every((v) => v == null) ? null : r; };
 
 function Header({ r, H, A, entry, finished }) {
-  const st = STATE[r.s];
+  const st = STATE[r.s], p = usePhase(r), live = p?.kind === "live", fmt = (t) => `${timeLabel(t)} ${tzAt(t)}`.trim();
+  const score = live ? [p.row.hg, p.row.ag] : finished ? [r.hg, r.ag] : p?.kind === "finished" ? [p.hg, p.ag] : null;
+  const extra = live ? [p.row.et != null && `Extra time ${scoreText(p.row.et)}`, p.row.pen != null && `Penalties ${scoreText(p.row.pen)}`].filter(Boolean) : [];
+  const badge = live ? <Badge bg="danger" className={p.stale ? "opacity-50" : ""}>{minuteLabel(p.row.min) ?? "Live"}</Badge>
+    : p?.kind === "overdue" ? <Badge bg="warning" text="dark">Kick-off passed</Badge>
+    : p?.kind === "left" ? <Badge bg="secondary">Left live feed</Badge>
+    : p?.kind === "postponed" || p?.kind === "cancelled" || p?.kind === "disrupted" ? <Badge bg="warning" text="dark">{p.kind === "disrupted" ? p.raw : p.kind === "postponed" ? "Postponed" : "Cancelled"}</Badge>
+    : st ? <Badge bg={st[0]} text={st[0] === "warning" ? "dark" : undefined}>{st[1]}</Badge> : finished || p?.kind === "finished" ? <Badge bg="secondary" title="Full time">FT</Badge> : <Badge bg="info" text="dark">Upcoming</Badge>;
+  const note = [p && describe(p, fmt), extra.length ? `The score shown is after 90 minutes. ${extra.join(". ")}.` : ""].filter(Boolean).join(" ");
+  const t = p?.t ?? r.t;
   return (
     <Card><Card.Body>
       <div className="d-flex align-items-center gap-2 small text-body-secondary mb-3">
         <LeagueLogo lg={entry} size={22} /><span>{entry?.name ?? r.league}{r.rn ? ` · ${r.rn}` : r.r ? ` · Round ${r.r}` : ""}{r.g ? ` · ${r.g}` : ""}</span>
-        <span className="ms-auto">{dateTimeLabel(r.t)}</span>
+        <span className="ms-auto text-end">{t != null && <>{dateTimeLabel(t)} <span className="tiny">({tzAt(t)})</span></>}{p?.moved && <Badge bg="warning" text="dark" className="ms-2" title="The kick-off time was changed (fixture change feed)">Rescheduled</Badge>}</span>
       </div>
       <div className="d-flex align-items-center justify-content-center gap-3 gap-md-5 text-center">
         <div className="flex-fill d-flex flex-column align-items-center gap-2" style={{ minWidth: 0 }}><Crest team={H} size={64} /><div className="fw-semibold text-break">{H.name}</div></div>
         <div style={{ minWidth: 110 }}>
-          {finished ? <div className="display-5 fw-bold">{r.hg}–{r.ag}</div> : <div className="display-6 fw-bold">{new Date(r.t * 1000).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</div>}
-          <div className="mt-1">{st ? <Badge bg={st[0]} text={st[0] === "warning" ? "dark" : undefined}>{st[1]}</Badge> : finished ? <Badge bg="secondary">Full time</Badge> : <Badge bg="info" text="dark">Upcoming</Badge>}</div>
+          {score ? <div className="display-5 fw-bold">{score[0] ?? "–"}–{score[1] ?? "–"}</div> : <div className="display-6 fw-bold">{t != null ? timeLabel(t) : ""}</div>}
+          <div className="mt-1">{badge}</div>
         </div>
         <div className="flex-fill d-flex flex-column align-items-center gap-2" style={{ minWidth: 0 }}><Crest team={A} size={64} /><div className="fw-semibold text-break">{A.name}</div></div>
       </div>
+      {note && <div className="small text-body-secondary text-center mt-3">{note}</div>}
     </Card.Body></Card>
   );
 }
@@ -66,7 +78,7 @@ function H2HTab({ out, H, A }) {
 
 function Inner({ lg, m, byId, code, comp, entry, user }) {
   const H = byId[m.h], A = byId[m.a], played = lg.results.find((x) => x.id === m.id);
-  const r = { ...m, ...(played ?? {}) }, finished = r.hg != null;
+  const r = { ...m, ...(played ?? {}) }, finished = r.hg != null, phase = usePhase(r);
   const [tab, setTab] = useState("overview"), [x, setX] = useState({ loading: true }), [mstats, setStats] = useState(null);
   const [h2hDoc, setH2hDoc] = useState(null), [h2hQ, setH2hQ] = useState({ queued: false, busy: false }), [saved, setSaved] = useState(false), [msg, setMsg] = useState(null);
 
@@ -108,8 +120,10 @@ function Inner({ lg, m, byId, code, comp, entry, user }) {
     catch (e) { setH2hQ((s) => ({ ...s, busy: false })); setMsg("Could not queue the request: " + e.message); }
   }
   async function save(pick) {
+    const lock = finished ? null : preMatchLock(phase);
+    if (lock) { setMsg(lock); return; }
     try {
-      await addDoc(collection(db, "users", user.uid, "picks"), { v: 3, matchId: r.id ?? null, kickoff: r.t ?? null, league: code, homeId: H.id, awayId: A.id, home: H.name, away: A.name, market: pick.market, selection: pick.selection, prob: pick.prob, odds: pick.odds, stake: pick.stake, createdAt: serverTimestamp() });
+      await addDoc(collection(db, "users", user.uid, "picks"), { v: 3, matchId: r.id ?? null, kickoff: phase?.t ?? r.t ?? null, league: code, homeId: H.id, awayId: A.id, home: H.name, away: A.name, market: pick.market, selection: pick.selection, prob: pick.prob, odds: pick.odds, stake: pick.stake, myProb: pick.myProb ?? null, mktProb: pick.mktProb ?? null, createdAt: serverTimestamp() });
       setSaved(true);
     } catch (e) { setMsg("Could not save: " + e.message); }
   }
@@ -143,7 +157,7 @@ function Inner({ lg, m, byId, code, comp, entry, user }) {
       </div>) : box(slot || <p className="text-body-secondary mb-0">Teamsheets are published about an hour before kickoff.</p>),
     stats: st ? <MatchStatsView s={st} h={H.name} a={A.name} /> : box(<p className="text-body-secondary mb-0">{finished ? "Per-match statistics are not available for this match." : "Statistics appear once the match has been played."}</p>),
     h2h: out ? <H2HTab out={out} H={H} A={A} /> : <Alert variant="secondary" className="mb-0">Not enough synced results for these teams yet.</Alert>,
-    analysis: out ? <AnalysisView out={out} fx={finished ? null : r} byId={byId} onSave={finished ? () => setMsg("Picks can only be saved for upcoming matches.") : save} saved={saved} ended={finished ? { hg: r.hg, ag: r.ag, t: r.t } : undefined} details={d}
+    analysis: out ? <AnalysisView out={out} fx={finished ? null : r} byId={byId} onSave={finished ? () => setMsg("Picks can only be saved for upcoming matches.") : save} saved={saved} ended={finished ? { hg: r.hg, ag: r.ag, t: r.t } : undefined} locked={finished ? null : preMatchLock(phase)} details={d}
       mstats={st} detailsSlot={slot || null} h2hInfo={finished ? undefined : { doc: h2hDoc, queued: h2hQ.queued, busy: h2hQ.busy, canRequest: true }} onRequestH2H={requestH2H} />
       : <Alert variant="warning" className="mb-0">No results synced for this competition yet, so there is nothing to base an analysis on.</Alert>,
   }[tab];
@@ -160,8 +174,9 @@ function Inner({ lg, m, byId, code, comp, entry, user }) {
   );
 }
 
-export default function MatchView({ m, d, user, onBack }) {
-  const code = m.league, s = useLeague(code), c = useComp(code), comp = d.byCode[code];
+export default function MatchView({ m: m0, d, user, onBack }) {
+  const code = m0.league, s = useLeague(code), c = useComp(code), comp = d.byCode[code];
+  const m = useMemo(() => (m0.t != null ? m0 : { ...(c.data?.fixtures?.find((f) => f.id === m0.id) ?? {}), ...m0, t: m0.t ?? c.data?.fixtures?.find((f) => f.id === m0.id)?.t }), [m0, c.data]);
   const byId = useMemo(() => { const o = { ...d.byId }; for (const t of c.data?.teams ?? []) o[t.id] = { ...t, league: code }; return o; }, [d.byId, c.data, code]);
   if (c.data && (!byId[m.h] || !byId[m.a])) return <Alert variant="warning">Match teams not found.</Alert>;
   return (

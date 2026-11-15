@@ -3,6 +3,7 @@ import { Badge, Button, Card, Col, Form, Row } from "react-bootstrap";
 import { MARKETS, dateTimeLabel, pct, shortDate } from "../lib/util";
 import { fairOdds } from "../lib/model";
 import { selProb } from "../lib/analysis";
+import { assess, parseOdds, removeMargin } from "../lib/value";
 import { CompareRow, Crest, FormChips, Ring, Spark, Stat } from "./ui";
 import Pitch from "./Pitch";
 import EventsFeed from "./EventsFeed";
@@ -44,31 +45,58 @@ function MarketRow({ label, v }) {
   );
 }
 
-/* ---------- bet check + save ---------- */
-function BetCard({ out, onSave, saved }) {
-  const { p } = out;
-  const [market, setMarket] = useState("1X2"), [sel, setSel] = useState(p.outcome), [odds, setOdds] = useState(""), [stake, setStake] = useState("");
-  const o = parseFloat(odds), prob = selProb(p, market, sel);
-  const ok = o > 1.0, ev = ok ? prob * o - 1 : null, edge = ok ? prob - 1 / o : null;
-  const verdict = ev == null ? null : ev > 0.05 ? ["success", "Value: model is more optimistic than the price"] : ev > -0.05 ? ["warning", "Fair price: no clear edge"] : ["danger", "Poor value: price is too short for this probability"];
-  const change = (m) => { setMarket(m); setSel(m === "1X2" ? p.outcome : Object.keys(MARKETS[m].sel)[0]); };
+/* ---------- bet check (value finder) + save ---------- */
+const TIER = { value: ["success", "Value: the model rates this more likely than the price implies"], fair: ["warning", "Fair price: no clear edge, so no bet"], poor: ["danger", "Poor value: the price is too short for this probability"] };
+const readBank = () => { try { return localStorage.getItem("betiq.bankroll") ?? ""; } catch { return ""; } };
+const writeBank = (v) => { try { localStorage.setItem("betiq.bankroll", v); } catch { /* storage unavailable */ } };
+
+function BetCard({ out, onSave, saved, locked }) {
+  const { p } = out, rough = out.comp?.kind === "comp";
+  const [market, setMarket] = useState("1X2"), [sel, setSel] = useState(p.outcome), [odds, setOdds] = useState({}), [stake, setStake] = useState(""), [bank, setBank] = useState(readBank), [mine, setMine] = useState("");
+  const keys = Object.keys(MARKETS[market].sel), prob = selProb(p, market, sel);
+  const lab = (k) => (market === "1X2" ? (k === "H" ? out.H.name : k === "A" ? out.A.name : "Draw") : MARKETS[market].sel[k]);
+  const o = parseOdds(odds[sel]), mk = removeMargin(Object.fromEntries(keys.map((k) => [k, parseOdds(odds[k])])), keys);
+  const a = o ? assess({ prob, odds: o, mkt: mk, sel, rough }) : null;
+  const bankN = parseFloat(bank), amount = a && a.stakeFrac > 0 && bankN > 0 ? Math.round(bankN * a.stakeFrac * 100) / 100 : null;
+  const myP = parseFloat(mine) / 100, myProb = myP > 0 && myP < 1 ? myP : null;
+  const change = (m) => { setMarket(m); setSel(m === "1X2" ? p.outcome : Object.keys(MARKETS[m].sel)[0]); setOdds({}); };
   return (
     <Card className="h-100"><Card.Body>
-      <Title icon="bullseye">Your bet check</Title>
+      <Title icon="bullseye">Value finder</Title>
       <Row className="g-2 mb-2">
         <Col xs={12} sm={6}><Form.Select aria-label="Market" value={market} onChange={(e) => change(e.target.value)}>{Object.entries(MARKETS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Form.Select></Col>
-        <Col xs={12} sm={6}><Form.Select aria-label="Selection" value={sel} onChange={(e) => setSel(e.target.value)}>{Object.entries(MARKETS[market].sel).map(([k, l]) => <option key={k} value={k}>{market === "1X2" ? (k === "H" ? out.H.name : k === "A" ? out.A.name : "Draw") : l}</option>)}</Form.Select></Col>
-        <Col xs={6}><Form.Control type="number" inputMode="decimal" min="1.01" step="0.01" placeholder="Odds, e.g. 2.10" aria-label="Odds" value={odds} onChange={(e) => setOdds(e.target.value)} /></Col>
-        <Col xs={6}><Form.Control type="number" inputMode="decimal" min="0" step="1" placeholder="Stake (optional)" aria-label="Stake" value={stake} onChange={(e) => setStake(e.target.value)} /></Col>
+        <Col xs={12} sm={6}><Form.Select aria-label="Your selection" value={sel} onChange={(e) => setSel(e.target.value)}>{keys.map((k) => <option key={k} value={k}>{lab(k)}</option>)}</Form.Select></Col>
+      </Row>
+      <div className="tiny text-body-secondary mb-1">Bookmaker odds. Fill in every outcome to remove the margin; only your selection is required.</div>
+      <Row className="g-2 mb-2">{keys.map((k) => (
+        <Col xs={12 / keys.length} key={k}>
+          <div className={"tiny text-truncate " + (k === sel ? "fw-semibold" : "text-body-secondary")}>{lab(k)}{k === sel && " (your bet)"}</div>
+          <Form.Control size="sm" type="number" inputMode="decimal" min="1.01" step="0.01" placeholder="e.g. 2.10" aria-label={`Odds for ${lab(k)}`} value={odds[k] ?? ""} onChange={(e) => setOdds((x) => ({ ...x, [k]: e.target.value }))} />
+        </Col>))}
+      </Row>
+      <Row className="g-2 mb-2">
+        <Col xs={4}><Form.Control size="sm" type="number" inputMode="decimal" min="0" step="1" placeholder="Stake" aria-label="Stake (optional)" title="Stake (optional)" value={stake} onChange={(e) => setStake(e.target.value)} /></Col>
+        <Col xs={4}><Form.Control size="sm" type="number" inputMode="decimal" min="0" step="1" placeholder="Bankroll" aria-label="Bankroll (optional, kept on this device)" title="Bankroll (optional, kept on this device)" value={bank} onChange={(e) => { setBank(e.target.value); writeBank(e.target.value); }} /></Col>
+        <Col xs={4}><Form.Control size="sm" type="number" inputMode="decimal" min="1" max="99" step="1" placeholder="Your %" aria-label="Your own probability in percent (optional)" title="Your own probability in percent (optional): lets the Calibration page compare you with the model" value={mine} onChange={(e) => setMine(e.target.value)} /></Col>
       </Row>
       <div className="d-flex justify-content-around text-center my-3">
         <Stat value={pct(prob)} label="Model probability" />
         <Stat value={fairOdds(prob)?.toFixed(2) ?? "–"} label="Fair odds" />
-        <Stat value={ok ? pct(1 / o, 1) : "–"} label="Odds imply" />
+        <Stat value={o ? pct(1 / o, 1) : "–"} label="Odds imply" />
       </div>
-      {verdict && <div className={`alert alert-${verdict[0]} py-2 small`}>{verdict[1]}. Expected return per 1 staked: <strong>{ev >= 0 ? "+" : ""}{ev.toFixed(2)}</strong> (edge {edge >= 0 ? "+" : ""}{(edge * 100).toFixed(1)} pts).</div>}
-      {!verdict && <p className="small text-body-secondary">Enter the odds you are offered to compare them with the model's fair odds.</p>}
-      <Button className="w-100" variant="outline-primary" disabled={saved} onClick={() => onSave({ market, selection: sel, prob, odds: ok ? o : null, stake: parseFloat(stake) > 0 ? parseFloat(stake) : null })}>
+      {a && mk && <div className="d-flex justify-content-around text-center mb-3">
+        <Stat value={pct(a.mktProb, 1)} label="Market, margin removed" />
+        <Stat value={pct(mk.margin, 1)} label="Bookmaker margin" />
+      </div>}
+      {a && mk && (mk.margin < 0 || mk.margin > 0.3) && <div className="alert alert-warning py-2 small">The odds you entered imply a {pct(mk.margin, 1)} margin, which is unusual. Check them for typos.</div>}
+      {a && <div className={`alert alert-${TIER[a.tier][0]} py-2 small`}>
+        {TIER[a.tier][1]}. Expected return per 1 staked: <strong>{a.ev >= 0 ? "+" : ""}{a.ev.toFixed(2)}</strong> (edge {a.edge >= 0 ? "+" : ""}{(a.edge * 100).toFixed(1)} pts vs the {mk ? "margin-free market" : "odds-implied"} probability).
+        <div className="mt-1">{a.tier !== "value" ? <strong>No bet.</strong> : rough ? "Stake suggestion is off here: cup and continental predictions are too rough." : <>Suggested stake: <strong>{pct(a.stakeFrac, 1)}</strong> of bankroll{amount != null && <> (<strong>{amount}</strong>)</>}. <span className="text-body-secondary">Quarter-Kelly, capped at 5%.</span>{amount != null && <Button variant="link" size="sm" className="p-0 ms-2 align-baseline" onClick={() => setStake(String(amount))}>Use</Button>}</>}</div>
+      </div>}
+      {a && mk && Math.abs(a.gap) > 0.15 && <div className="alert alert-info py-2 small"><i className="bi bi-info-circle me-2" />The model and the market differ by {Math.abs(a.gap * 100).toFixed(0)} points. Markets usually price in lineups and injuries, so check them before trusting this edge.</div>}
+      {!a && <p className="small text-body-secondary">Enter the odds you are offered to compare them with the model's fair odds.</p>}
+      {locked && <div className="alert alert-warning py-2 small"><i className="bi bi-clock-history me-2" />{locked} The calculator above still works.</div>}
+      <Button className="w-100" variant="outline-primary" disabled={saved || !!locked} onClick={() => onSave({ market, selection: sel, prob, odds: o, stake: parseFloat(stake) > 0 ? parseFloat(stake) : null, myProb, mktProb: a?.mktProb ?? null })}>
         <i className={`bi bi-${saved ? "check2" : "bookmark-plus"} me-2`} />{saved ? "Saved to My Picks" : "Save to My Picks"}
       </Button>
     </Card.Body></Card>
@@ -79,7 +107,7 @@ function BetCard({ out, onSave, saved }) {
 const Panel = ({ icon, title, right, children, className = "" }) => <Card className={"h-100 " + className}><Card.Body><Title icon={icon} right={right}>{title}</Title>{children}</Card.Body></Card>;
 const sum = (rows) => { const r = { w: 0, d: 0, l: 0, g: 0, btts: 0 }; rows.forEach((m) => { m.f > m.a ? r.w++ : m.f === m.a ? r.d++ : r.l++; r.g += m.f + m.a; if (m.f && m.a) r.btts++; }); return r; };
 
-export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hInfo, onRequestH2H, details, mstats, detailsSlot }) {
+export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hInfo, onRequestH2H, details, mstats, detailsSlot, locked }) {
   const { H, A, p, fh, fa, h2h, sH, sA, pgH, pgA } = out;
   const nm = (id) => byId[id]?.name ?? "Team";
   const [showAllH2H, setAll] = useState(false);
@@ -138,7 +166,7 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
     <Row className="g-3">
       {/* hero */}
       <Col xs={12}><Card className="pitch hero"><Card.Body className="py-4">
-        <div className="text-center mb-2">{ended ? <Badge bg="secondary">FULL TIME</Badge> : <Badge bg="primary" text="dark">UPCOMING</Badge>}</div>
+        <div className="text-center mb-2">{ended ? <Badge bg="secondary" title="Full time">FT</Badge> : <Badge bg="primary" text="dark">UPCOMING</Badge>}</div>
         <div className="hero-grid text-center">
           <div className="hero-team"><Crest team={H} size="clamp(48px, 15vw, 84px)" /><div className="hero-name h2 mt-2 mb-1">{H.name}</div><div className="d-flex justify-content-center"><FormChips r={fh.form} size={22} /></div></div>
           <div className="hero-mid">{ended ? <div className="score score-lg">{ended.hg}–{ended.ag}</div> : <div className="num fs-1 text-body-secondary">VS</div>}</div>
@@ -156,7 +184,7 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
         <Col xs={12} lg={5}>{pitch}</Col><Col xs={12} lg={4}>{events}</Col><Col xs={12} lg={3}>{stats}</Col>
         <Col xs={12} md={6} xl={3}>{h2hCompact}</Col><Col xs={12} md={6} xl={3}>{formCompact}</Col><Col xs={12} md={6} xl={3}>{prediction}</Col><Col xs={12} md={6} xl={3}>{insights}</Col>
       </>) : (<>
-        <Col xs={12} lg={5}>{prediction}</Col><Col xs={12} lg={3}>{insights}</Col><Col xs={12} lg={4}><BetCard out={out} onSave={onSave} saved={saved} /></Col>
+        <Col xs={12} lg={5}>{prediction}</Col><Col xs={12} lg={3}>{insights}</Col><Col xs={12} lg={4}><BetCard out={out} onSave={onSave} saved={saved} locked={locked} /></Col>
         <Col xs={12} lg={5}>{pitch}</Col><Col xs={12} lg={4}>{h2hCompact}</Col><Col xs={12} lg={3}>{formCompact}</Col>
       </>)}
 

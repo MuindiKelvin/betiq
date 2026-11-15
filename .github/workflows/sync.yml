@@ -16,7 +16,7 @@ jobs:
       - run: npm install
       - name: Sync
         run: |
-          if [ "${{ github.event.schedule }}" = "*/30 * * * *" ]; then npm run sync -- --requests-only; else npm run sync; fi
+          if [ "${{ github.event.schedule }}" = "*/30 * * * *" ]; then npm run sync -- --requests-only; else npm run sync && npm run schedule; fi
         env:
           BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

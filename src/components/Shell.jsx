@@ -1,17 +1,19 @@
+import { useLiveCount } from "../lib/useLive";
 import { useEffect, useRef, useState } from "react";
 import { Button, Form, Offcanvas } from "react-bootstrap";
 import { Crest, LeagueLogo, hit } from "./ui";
 import Credit from "./Credit";
 
-export const TABS = [["competitions", "Competitions", "globe2"], ["analyze", "Match Analysis", "bar-chart-line-fill"], ["picks", "My Picks", "star-fill"], ["history", "History", "clock-history"], ["model", "Model", "clipboard-data"],
+export const TABS = [["competitions", "Competitions", "globe2"], ["live", "Live", "broadcast"], ["analyze", "Match Analysis", "bar-chart-line-fill"], ["picks", "My Picks", "star-fill"], ["history", "History", "clock-history"], ["calibration", "Calibration", "bullseye"], ["model", "Model", "clipboard-data"],
   ["profile", "Profile", "person-fill"], ["help", "Help", "question-circle-fill"]];
 
 export function SideNav({ tab, onSelect, user, onSignOut }) {
+  const liveCount = useLiveCount();
   return (
     <div className="d-flex flex-column h-100">
       <div className="side-brand"><i className="bi bi-dribbble brand-ball" /><div><div className="brand">Bet<span>IQ</span></div><div className="tiny text-body-secondary">Analyze · Predict · Bet Smart</div></div></div>
       <nav className="px-3 py-3 d-flex flex-column gap-1 flex-fill">
-        {TABS.map(([k, l, i]) => <button key={k} type="button" className={"side-link" + (tab === k ? " active" : "")} onClick={() => onSelect(k)}><i className={`bi bi-${i}`} />{l}</button>)}
+        {TABS.map(([k, l, i]) => <button key={k} type="button" className={"side-link" + (tab === k ? " active" : "")} onClick={() => onSelect(k)}><i className={`bi bi-${i}`} />{l}{k === "live" && liveCount > 0 && <span className="badge bg-danger ms-auto">{liveCount}</span>}</button>)}
       </nav>
       <div className="side-user">
         {user.photoURL ? <img src={user.photoURL} alt="" width="40" height="40" className="rounded-circle" referrerPolicy="no-referrer" /> : <span className="avatar-fallback">{(user.displayName ?? "?")[0]}</span>}
