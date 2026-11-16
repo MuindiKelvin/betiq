@@ -82,8 +82,11 @@ export function toRow(e, byName) {
 const stRow = (r) => ({ p: num(r.position), id: num(r.team_id), n: r.team_name ?? null, pl: num(r.played), w: num(r.won), d: num(r.drawn), l: num(r.lost), gf: num(r.gf), ga: num(r.ga), pts: num(r.pts), f: r.form ?? null, live: !!r.live, z: obj(r.zone) ? { k: r.zone.key ?? null, l: r.zone.label ?? null, t: r.zone.type ?? null } : null });
 export function buildStandings(d) {
   if (!d) return null;
-  const groups = Array.isArray(d.groups) ? d.groups.map((g) => ({ name: g.name ?? g.group ?? g.group_name ?? "", rows: firstArray(g, ["standings", "rows", "table", "results"]).map(stRow) })).filter((g) => g.rows.length) : [];
-  const rows = groups.length ? [] : firstArray(d, ["standings", "table", "results"]).map(stRow);
+  
+  // groups is either an array of { name, standings } or (as the API really sends it) an object: { "League A, Group 1": [rows], ... }
+const groups = Array.isArray(d.groups) ? d.groups.map((g) => ({ name: g.name ?? g.group ?? g.group_name ?? "", rows: firstArray(g, ["standings", "rows", "table", "results"]).map(stRow) })).filter((g) => g.rows.length)
+    : obj(d.groups) ? Object.entries(d.groups).map(([name, v]) => ({ name, rows: firstArray(v, ["standings", "rows", "table", "results"]).map(stRow) })).filter((g) => g.rows.length) : [];
+const rows = groups.length ? [] : firstArray(d, ["standings", "table", "results"]).map(stRow);
   if (!groups.length && !rows.length) return null;
   return { rows, groups, zones: Array.isArray(d.zones) ? d.zones : obj(d.zones) ? d.zones : null };
 }
