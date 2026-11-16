@@ -6,10 +6,52 @@ import { loadPicks } from "../lib/picks";
 import { pickWithLive } from "../lib/pickstate";
 import { minuteLabel, phaseOf } from "../lib/phase";
 import { useLive } from "../lib/useLive";
-import { MARKETS, groupByDay, pct, pickLabel, pickMarket } from "../lib/util";
+import { MARKETS, dayLabel, pct, pickLabel, pickMarket } from "../lib/util";
+import { buildReceipts, downloadReceipt, money } from "../lib/receipts";
 import { Pager, SearchBox, Spin, Stat, hit, usePaged } from "../components/ui";
 
-const money = (x) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2);
+function PickLine({ p, lg, onRemove }) {
+  return (
+    <ListGroup.Item className="d-flex align-items-center gap-3 py-3 flex-wrap">
+      <div className="flex-fill" style={{ minWidth: 180 }}>
+        <div className="fw-medium">{p.home} vs {p.away}</div>
+        {lg && <div className="small text-body-secondary"><i className="bi bi-trophy me-1" />{lg.name}{p.v !== 3 && <Badge bg="secondary" className="ms-2">Legacy</Badge>}</div>}
+      </div>
+      <div className="text-end"><div>{pickLabel(p)}</div><div className="small text-body-secondary">{MARKETS[pickMarket(p)]?.label}{p.prob != null && ` · ${pct(p.prob)}`}</div></div>
+      {p.odds && <div className="text-end small"><div>@ {p.odds.toFixed(2)}</div>{p.stake && <div className="text-body-secondary">stake {p.stake}</div>}</div>}
+      <div className="text-end" style={{ minWidth: 130 }}>
+        {p.won != null ? <><Badge bg={p.won ? "success" : "danger"}>{p.score} · FT · {p.won ? "Won" : "Lost"}</Badge>{p.profit != null && <div className={"small " + (p.profit >= 0 ? "text-success" : "text-danger")}>{money(p.profit)}</div>}</>
+          : p.live ? <><Badge bg="danger" className={p.liveStale ? "opacity-50" : ""}>{minuteLabel(p.live.min) ?? "Live"} · {p.live.hg ?? "–"}–{p.live.ag ?? "–"}</Badge><div className="tiny text-body-secondary">in play</div></>
+          : p.wait === "overdue" || p.wait === "left" ? <><Badge bg="warning" text="dark">Awaiting result</Badge><div className="tiny text-body-secondary">kick-off passed</div></>
+          : p.wait ? <Badge bg="warning" text="dark">{p.wait === "postponed" ? "Postponed" : p.wait === "cancelled" ? "Cancelled" : p.raw ?? "Disrupted"}</Badge>
+          : <Badge bg="secondary">{p.v !== 3 ? "Not tracked" : p.matchId ? "Pending" : "No fixture"}</Badge>}
+      </div>
+      <Button size="sm" variant="link" className="text-body-secondary p-0" aria-label="Delete pick" onClick={() => onRemove(p.id)}><i className="bi bi-trash" /></Button>
+    </ListGroup.Item>
+  );
+}
+
+function Receipt({ r, d, who, onRemove }) {
+  const name = (c) => d.byCode[c]?.name ?? null, pg = usePaged(r.picks, 5, r.key);   // 5 picks per page inside a receipt
+  return (
+    <Card>
+      <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
+        <div className="me-auto"><div className="fw-semibold">{dayLabel(r.t)}</div><div className="tiny text-body-secondary"><i className="bi bi-receipt me-1" />Receipt {r.id}</div></div>
+        <Badge bg={r.open ? "warning" : "success"} text={r.open ? "dark" : undefined}>{r.open ? `Ongoing · ${r.openCount} pending` : "Finished"}</Badge>
+        <Button size="sm" variant="outline-secondary" onClick={() => downloadReceipt(r, { leagueName: name, who })}><i className="bi bi-download me-1" />Download</Button>
+      </Card.Header>
+      <ListGroup variant="flush">{pg.slice.map((p) => <PickLine key={p.id} p={p} lg={d.byCode[p.league]} onRemove={onRemove} />)}</ListGroup>
+      {pg.pages > 1 && <div className="py-2 border-top"><Pager page={pg.page} pages={pg.pages} onChange={pg.setPage} /></div>}
+      <Card.Footer className="d-flex flex-wrap column-gap-4 row-gap-1 small text-body-secondary">
+        <span>Picks <strong className="text-body">{r.picks.length}</strong></span>
+        {r.settled > 0 && <span>Won <strong className="text-body">{r.won}/{r.settled}</strong></span>}
+        {r.stake > 0 && <span>Total stake <strong className="text-body">{r.stake.toFixed(2)}</strong></span>}
+        {r.ret > 0 && <span>Potential return <strong className="text-body">{r.ret.toFixed(2)}</strong></span>}
+        {r.profit != null && <span>Profit <strong className={r.profit >= 0 ? "text-success" : "text-danger"}>{money(r.profit)}</strong></span>}
+      </Card.Footer>
+    </Card>
+  );
+}
 
 export default function Picks({ user, d, history }) {
   const [saved, setSaved] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState(""), { doc: liveDoc, finals, nowMs } = useLive();
@@ -20,10 +62,14 @@ export default function Picks({ user, d, history }) {
   async function remove(id) {
     try { await deleteDoc(doc(db, "users", user.uid, "picks", id)); setSaved((r) => r.filter((p) => p.id !== id)); } catch (e) { setErr(e.message); }
   }
-  const all = rows ?? [], done = all.filter((r) => r.won != null), won = (l) => l.filter((r) => r.won).length;
+  const who = user.displayName || user.email || "", all = rows ?? [], done = all.filter((r) => r.won != null), won = (l) => l.filter((r) => r.won).length;
   const staked = done.filter((r) => r.profit != null), stakedSum = staked.reduce((s, r) => s + r.stake, 0), profit = staked.reduce((s, r) => s + r.profit, 0);
-  const base = history ? done : all, shown = base.filter((r) => !q.trim() || hit(q, `${r.home} ${r.away} ${d.byCode[r.league]?.name ?? ""} ${pickLabel(r)}`));
-  const pg = usePaged(shown, 10, q + history);
+  // one receipt per match day: open ones (a pick still unsettled) are "Ongoing", the rest "Finished", each listed under its date
+  const receipts = useMemo(() => buildReceipts(rows ?? []), [rows]);
+  const pool = history ? receipts.filter((r) => !r.open && r.settled) : receipts;
+  const match = (r) => !q.trim() || r.picks.some((p) => hit(q, `${p.home} ${p.away} ${d.byCode[p.league]?.name ?? ""} ${pickLabel(p)} ${r.id} ${dayLabel(r.t)}`));
+  const ongoing = pool.filter((r) => r.open && match(r)), finished = pool.filter((r) => !r.open && match(r));
+  const pgO = usePaged(ongoing, 5, q + history + "o"), pg = usePaged(finished, 5, q + history);   // receipts per page
   const group = (keyFn, keys) => keys.map((k) => [k, done.filter((r) => keyFn(r) === k)]).filter(([, l]) => l.length);
   const tiles = [["Saved", all.length], ["Settled", done.length], ["Hit rate", done.length ? pct(won(done) / done.length) : "n/a"],
     ...(staked.length ? [["Profit (units)", money(profit)], ["ROI", stakedSum ? pct(profit / stakedSum, 1) : "n/a"]] : [])];
@@ -40,29 +86,10 @@ export default function Picks({ user, d, history }) {
             <Col xs={12} md={6} key={title}><Card><Card.Header>{title}</Card.Header><ListGroup variant="flush">{g.map(([k, l]) => (
               <ListGroup.Item key={k} className="d-flex align-items-center gap-3"><span className="flex-fill">{name(k)}</span><span className="small text-body-secondary">{won(l)}/{l.length}</span><strong>{pct(won(l) / l.length)}</strong></ListGroup.Item>))}</ListGroup></Card></Col>))}
         </Row>)}
-      {base.length > 0 && <SearchBox value={q} onChange={setQ} placeholder="Search team, league or pick" style={{ maxWidth: 340 }} />}
-      {rows && !shown.length && <Alert variant="secondary" className="mb-0">{base.length ? "No picks match your search." : history ? "No settled picks yet. A pick settles as soon as its match is reported finished." : "No picks yet. Analyze a match and tap “Save to My Picks”."}</Alert>}
-      {groupByDay(pg.slice).map(([label, items]) => (
-        <div key={label}>
-          <div className="small fw-semibold text-body-secondary mb-2 px-1">{label}</div>
-          <ListGroup>{items.map((r) => (
-            <ListGroup.Item key={r.id} className="d-flex align-items-center gap-3 py-3 flex-wrap">
-              <div className="flex-fill" style={{ minWidth: 180 }}>
-                <div className="fw-medium">{r.home} vs {r.away}</div>
-                {d.byCode[r.league] && <div className="small text-body-secondary"><i className="bi bi-trophy me-1" />{d.byCode[r.league].name}{r.v !== 3 && <Badge bg="secondary" className="ms-2">Legacy</Badge>}</div>}
-              </div>
-              <div className="text-end"><div>{pickLabel(r)}</div><div className="small text-body-secondary">{MARKETS[pickMarket(r)]?.label}{r.prob != null && ` · ${pct(r.prob)}`}</div></div>
-              {r.odds && <div className="text-end small"><div>@ {r.odds.toFixed(2)}</div>{r.stake && <div className="text-body-secondary">stake {r.stake}</div>}</div>}
-              <div className="text-end" style={{ minWidth: 130 }}>
-                {r.won != null ? <><Badge bg={r.won ? "success" : "danger"}>{r.score} · FT · {r.won ? "Won" : "Lost"}</Badge>{r.profit != null && <div className={"small " + (r.profit >= 0 ? "text-success" : "text-danger")}>{money(r.profit)}</div>}</>
-                  : r.live ? <><Badge bg="danger" className={r.liveStale ? "opacity-50" : ""}>{minuteLabel(r.live.min) ?? "Live"} · {r.live.hg ?? "–"}–{r.live.ag ?? "–"}</Badge><div className="tiny text-body-secondary">in play</div></>
-                  : r.wait === "overdue" || r.wait === "left" ? <><Badge bg="warning" text="dark">Awaiting result</Badge><div className="tiny text-body-secondary">kick-off passed</div></>
-                  : r.wait ? <Badge bg="warning" text="dark">{r.wait === "postponed" ? "Postponed" : r.wait === "cancelled" ? "Cancelled" : r.raw ?? "Disrupted"}</Badge>
-                  : <Badge bg="secondary">{r.v !== 3 ? "Not tracked" : r.matchId ? "Pending" : "No fixture"}</Badge>}
-              </div>
-              <Button size="sm" variant="link" className="text-body-secondary p-0" aria-label="Delete pick" onClick={() => remove(r.id)}><i className="bi bi-trash" /></Button>
-            </ListGroup.Item>))}</ListGroup>
-        </div>))}
+      {pool.length > 0 && <SearchBox value={q} onChange={setQ} placeholder="Search team, league, pick or date" style={{ maxWidth: 340 }} />}
+      {rows && !ongoing.length && !finished.length && <Alert variant="secondary" className="mb-0">{pool.length ? "No receipts match your search." : history ? "No settled picks yet. A pick settles as soon as its match is reported finished." : "No picks yet. Analyze a match and tap “Save to My Picks”."}</Alert>}
+      {ongoing.length > 0 && <><h2 className="h5 mb-0"><i className="bi bi-broadcast me-2 text-primary" />Ongoing</h2>{pgO.slice.map((r) => <Receipt key={r.key} r={r} d={d} who={who} onRemove={remove} />)}<Pager page={pgO.page} pages={pgO.pages} onChange={pgO.setPage} /></>}
+      {finished.length > 0 && <>{!history && <h2 className="h5 mb-0"><i className="bi bi-check2-circle me-2 text-primary" />Finished</h2>}{pg.slice.map((r) => <Receipt key={r.key} r={r} d={d} who={who} onRemove={remove} />)}</>}
       <Pager page={pg.page} pages={pg.pages} onChange={pg.setPage} />
     </div>
   );

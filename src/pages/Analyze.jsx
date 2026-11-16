@@ -79,6 +79,7 @@ export default function Analyze({ user, d, pre }) {
     } catch (e) { setH2h((x) => ({ ...x, busy: false })); setMsg({ type: "danger", text: "Could not queue the request: " + e.message }); }
   }
   const changeComp = (c) => { setCode(c); setH(null); setA(null); setOut(null); setMsg(null); };
+  const back = () => { setOut(null); setMsg(null); setSaved(false); setH2h(null); window.scrollTo({ top: 0, behavior: "smooth" }); };   // back to the matches list
   const openFx = (m) => { setH(m.h); setA(m.a); run(m.h, m.a); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
   return (
@@ -96,6 +97,7 @@ export default function Analyze({ user, d, pre }) {
       </Card.Body></Card>
       {msg && <Alert variant={msg.type} className="mb-0">{msg.text}</Alert>}
       {busy && <Spin />}
+      {out && !busy && <div><Button size="sm" variant="outline-secondary" onClick={back}><i className="bi bi-arrow-left me-1" />Back to matches</Button></div>}
       {out && <AnalysisView out={out} fx={out.fx} byId={byId} onSave={save} saved={saved} locked={lock} h2hInfo={h2hInfo} onRequestH2H={requestH2H} details={out.details} />}
       {!out && !busy && s.data && (fixtures.length ? <Fixtures fixtures={fixtures} byId={byId} onOpen={openFx} /> : <Alert variant="info">No upcoming fixtures in this competition right now. You can still pick any two teams above.</Alert>)}
     </div>
