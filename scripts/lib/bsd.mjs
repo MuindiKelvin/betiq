@@ -154,10 +154,10 @@ export function buildEvents(d) {
   return { goals, cards, subs, hasLines: lines.length > 0 };
 }
 
-export function buildDetails({ id, code, lineups, stats, commentary, now = new Date().toISOString() }) {
+export function buildDetails({ id, code, lineups, stats, commentary, detail, now = new Date().toISOString() }) {
   const ev = commentary ? buildEvents(commentary) : null, ex = stats ? buildStatsExtras(stats) : null;
   const finished = commentary?.status === "finished";
-  const doc = { id: +id, league: code, finished, fetched: now, lineups: lineups ? buildLineups(lineups) : null, goals: null, cards: null, subs: null };
+  const doc = { id: +id, league: code, finished, fetched: now, lineups: lineups ? buildLineups(lineups) : null, goals: null, cards: null, subs: null, info: detail ? infoOf(detail) : null };
   if (ev && (ev.hasLines || finished)) { doc.goals = ev.goals; doc.cards = ev.cards; doc.subs = ev.subs; }
   if (ex) { doc.shots = ex.shots; doc.avgpos = ex.avgpos; doc.momentum = ex.momentum; doc.stats = ex.stats; }
   return doc;
@@ -178,3 +178,129 @@ export function buildPlayerPack(profile, career, transfers, stats, now = new Dat
   return { profile: flat(profile), career: rows(career, ["career", "seasons", "results"]).slice(0, 40), transfers: rows(transfers, ["transfers", "results"]).slice(0, 40),
     log: rows(stats, ["results", "stats", "matches"]).slice(0, 30), updated: now };
 }
+
+/* ---------- scorers and assists (names), checked against the score ---------- */
+// Source: /events/{id}/commentary/ (documented: `player` is the scorer, `related_player` the assist, `team` the side credited with the goal, own goals included).
+// One call per match is the floor: no bulk endpoint for scorers is documented. `complete` compares the regulation goals found with the 90-minute score the API reports,
+// so a data gap is flagged instead of being shown as "No goals" or as a shorter list than the real one.
+const clean = (o) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== null && v !== undefined));
+const GOAL_KIND = { goal: "reg", penalty_goal: "pen", own_goal: "og" };
+export function goalsRow(d, hg, ag) {
+  const lines = firstArray(d, ["commentary", "lines", "results"]).filter((l) => l && sideOf(l.team) && GOAL_KIND[l.type]);
+  const regulation = (l) => (num(l.period) !== null ? num(l.period) <= 2 : (num(l.minute) ?? 0) <= 90);   // extra time is kept but flagged `et` and never counted against the 90-minute score
+  const g = lines.map((l) => {
+    const scorer = obj(l.player) ? l.player : null, helper = l.type === "own_goal" || !obj(l.related_player) ? null : l.related_player;
+    return clean({ m: num(l.minute), x: num(l.added_time), s: sideOf(l.team), p: scorer?.name ?? null, pi: num(scorer?.id), a: helper?.name ?? null, ai: num(helper?.id), k: GOAL_KIND[l.type], et: regulation(l) ? null : 1 });
+  });
+  const reg = g.filter((x) => !x.et), homeN = reg.filter((x) => x.s === "h").length, awayN = reg.length - homeN;
+  const known = num(hg) !== null && num(ag) !== null;
+  return { g, n: reg.length, complete: known ? homeN === num(hg) && awayN === num(ag) : null };
+}
+// Which finished matches still need a goals lookup. results: [{id, t, hg, ag}], have: stored { [id]: { ok, n, at } }.
+// 0-0 after 90 minutes needs no call (recorded as "no goals"). A lookup that came back incomplete is retried after `retryS` while the match is younger than `giveUpS`.
+export function goalsDue(results, have, nowS, cap, { retryS = 6 * 3600, giveUpS = 3 * 86400 } = {}) {
+  const fetch = [], zero = [];
+  for (const r of [...(results ?? [])].sort((x, y) => y.t - x.t)) {                      // newest first
+    const hg = num(r.hg), ag = num(r.ag); if (hg === null || ag === null) continue;
+    const h = have?.[r.id];
+    if (hg + ag === 0) { if (!h) zero.push(r.id); continue; }
+    if (h) {
+      if (h.ok === 1 && (h.n === undefined || h.n === hg + ag)) continue;                // complete (and the score was not corrected since)
+      if (h.ok !== 1 && (nowS - r.t > giveUpS || nowS - h.at < retryS)) continue;         // incomplete: wait, or give up on old matches
+    }
+    if (fetch.length < cap) fetch.push(r.id);
+  }
+  return { fetch, zero };
+}
+// Keep entries for matches still in the season, plus anything fetched in the last `graceS`; stay under Firestore's 1 MiB document limit (oldest go first)
+export function pruneGoals(m, keep, nowS, { graceS = 7 * 86400, maxBytes = 900000 } = {}) {
+  const out = {};
+  for (const [id, e] of Object.entries(m ?? {})) if (keep.has(+id) || nowS - (e?.at ?? 0) < graceS) out[id] = e;
+  let size = JSON.stringify(out).length;
+  if (size > maxBytes) for (const [id, e] of Object.entries(out).sort((x, y) => (x[1].at ?? 0) - (y[1].at ?? 0))) { if (size <= maxBytes) break; size -= JSON.stringify(e).length + id.length + 4; delete out[id]; }
+  return out;
+}
+
+/* ---------- match info: referee, venue, managers ---------- */
+// The docs say the match detail (/events/{id}/) carries "coaches, referee, venue ... attendance" but do not spell out the field names, so each reader accepts the plausible
+// shapes (nested {id, name}, a bare name, or sibling `x_id` / `x_name` fields). `npm run probe` prints the real shape; send me any FAIL line.
+const str = (v) => (typeof v === "string" && v.trim() ? v.trim() : null);
+function ent(e, ...keys) {
+  for (const k of keys) {
+    const v = e?.[k];
+    if (obj(v)) { const id = num(v.id), n = str(v.name ?? v.full_name ?? v.short_name); if (id !== null || n) return { id, n, o: v }; }
+    else if (str(v)) return { id: num(e[`${k}_id`]), n: str(v), o: null };
+    const id = num(e?.[`${k}_id`]), n = str(e?.[`${k}_name`]);
+    if (id !== null || n) return { id, n, o: null };
+  }
+  return null;
+}
+const slim = (x) => (x ? clean({ id: x.id, n: x.n }) : null);
+export const refereeOf = (e) => slim(ent(e, "referee", "official"));
+export function venueOf(e) {
+  const x = ent(e, "venue", "stadium"); if (!x) return null;
+  const o = x.o ?? {};
+  return clean({ id: x.id, n: x.n, city: str(o.city ?? e?.venue_city), cap: num(o.capacity ?? e?.venue_capacity) });
+}
+function coachOf(e, side) {
+  const c = e?.coaches;
+  if (obj(c) && c[side] != null) return slim(ent({ x: c[side] }, "x"));
+  if (Array.isArray(c)) { const m = c.find((x) => obj(x) && (x.side === side || x.team === side || x.is_home === (side === "home") || x.home === (side === "home"))); if (m) return slim(ent({ x: m }, "x")); }
+  return slim(ent(e, `${side}_coach`, `${side}_manager`));
+}
+// { rf: referee, vn: venue, hc/ac: home/away manager, att: attendance } with only what was found; null when nothing was
+export function infoOf(e) {
+  if (!obj(e)) return null;
+  const o = clean({ rf: refereeOf(e), vn: venueOf(e), hc: coachOf(e, "home"), ac: coachOf(e, "away"), att: num(e.attendance) });
+  return Object.keys(o).length ? o : null;
+}
+// A team profile (/teams/{id}/ is documented to hold "venue, coach, colours, country"): keep venue id/capacity and the coach id, which `flat` would drop
+export function teamExtras(p) {
+  if (!obj(p)) return null;
+  const o = clean({ vn: venueOf(p), co: slim(ent(p, "coach", "manager", "head_coach")) });
+  return Object.keys(o).length ? o : null;
+}
+
+/* ---------- managers (career records), referees, venues ---------- */
+// One level of scalars plus the scalars inside nested objects (key_subkey), for profiles whose aggregates live in a sub-object
+export function flat2(o, maxStr = 300) {
+  const out = flat(o, maxStr);
+  for (const [k, v] of Object.entries(o ?? {})) {
+    if (!obj(v)) continue;
+    for (const [k2, v2] of Object.entries(v)) {
+      if (k2 === "id" || k2 === "name" || v2 === null || v2 === undefined || v2 === "" || obj(v2) || Array.isArray(v2)) continue;
+      out[`${k}_${k2}`] = typeof v2 === "string" && v2.length > maxStr ? v2.slice(0, maxStr) : v2;
+    }
+  }
+  return out;
+}
+// Documented on /managers/{id}/career/: one entry per spell with matches, wins, draws, losses, points, ppm, goals_for, goals_against, goal_diff, plus `home` and `away` blocks.
+// `ppm` is null (never 0.0) when there are no matches to judge, so nulls are kept as nulls.
+const REC = ["matches", "wins", "draws", "losses", "points", "ppm", "goals_for", "goals_against", "goal_diff"];
+export const recOf = (o) => (obj(o) ? Object.fromEntries(REC.map((k) => [k, num(o[k])])) : null);
+const recAny = (o) => { const r = recOf(o); return r && Object.values(r).some((v) => v !== null) ? r : null; };
+// appointment_effect: the club's record in the `window` matches before the appointment vs the same number from it, ending with the tenure.
+// Documented as null when the tenure has no start date or one side has no matches: an invented 0.0 would claim he improved everything.
+export function aeOf(a) {
+  if (!obj(a)) return null;
+  const side = (s) => (obj(s) && num(s.matches) > 0 ? { matches: num(s.matches), points: num(s.points), ppm: num(s.ppm) } : null);
+  const before = side(a.before), after = side(a.after);
+  return before && after ? { window: num(a.window), before, after, ppm_change: num(a.ppm_change) } : null;
+}
+export function spellOf(s) {
+  const base = flat(s); for (const k of REC) delete base[k];
+  return { ...base, rec: recAny(s), home: recAny(s?.home), away: recAny(s?.away), ae: aeOf(s?.appointment_effect) };
+}
+// The real profile carries matches_total / wins / draws / losses (no points): points and ppm are plain arithmetic on those, never a guess
+export function profileRec(p) {
+  const r = recAny(p?.record ?? { ...p, matches: p?.matches ?? p?.matches_total });
+  if (r && r.points === null && r.matches && r.wins !== null && r.draws !== null) { r.points = 3 * r.wins + r.draws; r.ppm = Math.round((r.points / r.matches) * 100) / 100; }
+  return r;
+}
+export function buildManagerPack(profile, career, now = new Date().toISOString()) {
+  return { profile: flat2(profile), rec: profileRec(profile), career: firstArray(career, ["career", "spells", "results"]).map(spellOf).slice(0, 40), updated: now };
+}
+export const buildRefereePack = (profile, now = new Date().toISOString()) => ({ profile: flat2(profile), updated: now });
+export const buildVenuePack = (profile, comps, now = new Date().toISOString()) => ({ profile: flat2(profile), competitions: rows(comps, ["competitions", "results"]).slice(0, 40), updated: now });
+// list rows (managers or referees of one competition): scalars only, capped
+export const buildPeople = (d) => rows(d, ["results", "managers", "referees"]).filter((r) => r.id != null).slice(0, 300);

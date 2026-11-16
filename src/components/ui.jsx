@@ -22,6 +22,8 @@ function Img({ kind, id, name, size, round }) {
 export const Crest = ({ team, size = 28 }) => <Img kind="team" id={team?.id} name={team?.name} size={size} />;
 export const LeagueLogo = ({ lg, size = 36 }) => <Img kind="league" id={lg?.id} name={lg?.name} size={size} />;
 export const PlayerPhoto = ({ id, name, size = 40 }) => <Img kind="player" id={id} name={name} size={size} round />;
+export const ManagerPhoto = ({ id, name, size = 40 }) => <Img kind="manager" id={id} name={name} size={size} round />;
+export const VenuePhoto = ({ id, name, size = 40 }) => <Img kind="venue" id={id} name={name} size={size} />;
 
 const CHIP = { W: "success", D: "secondary", L: "danger" };
 export const FormChips = ({ r = [], size = 26 }) => (

@@ -11,6 +11,7 @@ import Competitions from "./pages/Competitions";
 import Competition from "./pages/Competition";
 import Team from "./pages/Team";
 import Player from "./pages/Player";
+import { Manager, Referee, Venue } from "./pages/People";
 import Picks from "./pages/Picks";
 import Model from "./pages/Model";
 import Calibration from "./pages/Calibration";
@@ -51,7 +52,7 @@ function Login({ onError, err }) {
 export default function App() {
   const [user, setUser] = useState(undefined), [tab, setTab] = useState("competitions"), [menu, setMenu] = useState(false);
   const [comp, setComp] = useState(null), [compTab, setCompTab] = useState("overview");          // selected competition + its tab
-  const [team, setTeam] = useState(null), [player, setPlayer] = useState(null), [view, setView] = useState(null), [pre, setPre] = useState(null);
+  const [team, setTeam] = useState(null), [player, setPlayer] = useState(null), [ent, setEnt] = useState(null), [view, setView] = useState(null), [pre, setPre] = useState(null);
   const [err, setErr] = useState(null), [d, setD] = useState(null);
   useEffect(() => onAuthStateChanged(auth, setUser), []);
 
@@ -73,11 +74,12 @@ export default function App() {
   if (!user) return <Login onError={setErr} err={err} />;
 
   // navigation: detail pages (match > player > team) sit on top of the current page; sidebar clicks clear them
-  const clear = () => { setView(null); setPlayer(null); setTeam(null); setPre(null); window.scrollTo({ top: 0 }); };
+  const clear = () => { setView(null); setPlayer(null); setTeam(null); setEnt(null); setPre(null); window.scrollTo({ top: 0 }); };
   const nav = {
     comp: (code, t = "overview") => { clear(); setComp(code); setCompTab(t); setTab("competitions"); },
-    team: (id, code) => { setPlayer(null); setView(null); setTeam({ id, code }); window.scrollTo({ top: 0 }); },
-    player: (p) => { setPlayer(p); window.scrollTo({ top: 0 }); },
+    team: (id, code) => { setPlayer(null); setView(null); setEnt(null); setTeam({ id, code }); window.scrollTo({ top: 0 }); },
+    person: (e) => { setView(null); setPlayer(null); setEnt(e); window.scrollTo({ top: 0 }); },   // { kind: "manager" | "referee" | "venue", id, code, name, row }
+    player: (p) => { setEnt(null); setPlayer(p); window.scrollTo({ top: 0 }); },
     analyze: (p) => { clear(); setPre(p ?? null); setTab("analyze"); },
     open: (m) => { window.scrollTo({ top: 0 }); setView(m); },   // every match (played or upcoming) opens the match page
   };
@@ -92,7 +94,9 @@ export default function App() {
     profile: <Profile user={user} d={d} onSignOut={out} />,
     help: <Help />,
   }[tab] ?? <Picks key={tab} user={user} d={d} history={tab === "history"} />);
-  const top = d && (view ? <MatchView key={view.id} m={view} d={d} user={user} onBack={() => setView(null)} />
+  const Page = { manager: Manager, referee: Referee, venue: Venue }[ent?.kind];
+  const top = d && (view ? <MatchView key={view.id} m={view} d={d} user={user} onBack={() => setView(null)} nav={nav} />
+    : ent && Page ? <Page key={`${ent.kind}-${ent.id}`} ent={ent} d={d} nav={nav} onBack={() => setEnt(null)} />
     : player ? <Player key={player.id} player={player} d={d} nav={nav} onBack={() => setPlayer(null)} />
     : team ? <Team key={`${team.id}-${team.code}`} team={team} d={d} nav={nav} onBack={() => setTeam(null)} /> : page);
   const shell = { tab, onSelect: go, user, onSignOut: out };

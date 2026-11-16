@@ -4,21 +4,22 @@ service cloud.firestore {
     // Synced data: signed-in users can read; nobody can write from the browser (only the sync script, via the admin key).
     match /{coll}/{id} {
       allow read: if request.auth != null
-        && coll in ['catalog', 'index', 'meta', 'teams', 'seasons', 'fixtures', 'standings', 'leaders', 'transfers', 'squads', 'players', 'details', 'mstats', 'h2h', 'live', 'schedule'];
+        && coll in ['catalog', 'index', 'meta', 'teams', 'seasons', 'fixtures', 'standings', 'leaders', 'transfers', 'squads', 'players', 'details', 'mstats', 'h2h', 'live', 'schedule', 'goals', 'info', 'managers', 'referees', 'coaches', 'officials', 'venues'];
       allow write: if false;
     }
-    // Requests queued from the app (match details, all-competition head-to-head, player profiles). The sync script fulfils and deletes them.
+    // Requests queued from the app (match details, all-competition head-to-head, player profiles, manager / referee / venue profiles). The sync script fulfils and deletes them.
     match /requests/{id} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
-        && id.matches('^(d|h2h|p)_[0-9_]+$')
-        && request.resource.data.keys().hasOnly(['kind', 'league', 'eid', 'h', 'a', 'pid', 'at'])
-        && request.resource.data.kind in ['details', 'h2h', 'player']
+        && id.matches('^(d|h2h|p|m|r|v)_[0-9_]+$')
+        && request.resource.data.keys().hasOnly(['kind', 'league', 'eid', 'h', 'a', 'pid', 'oid', 'at'])
+        && request.resource.data.kind in ['details', 'h2h', 'player', 'manager', 'referee', 'venue']
         && request.resource.data.league is string
         && (!('eid' in request.resource.data) || request.resource.data.eid is int)
         && (!('h' in request.resource.data) || request.resource.data.h is int)
         && (!('a' in request.resource.data) || request.resource.data.a is int)
         && (!('pid' in request.resource.data) || request.resource.data.pid is int)
+        && (!('oid' in request.resource.data) || request.resource.data.oid is int)
         && request.resource.data.at == request.time;
       allow update, delete: if false;
     }

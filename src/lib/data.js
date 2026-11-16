@@ -18,6 +18,10 @@ export const loadLeaders = (code) => one("leaders", code);
 export const loadTransfers = (code) => one("transfers", code);
 export const loadSquad = (id) => one("squads", id);
 export const loadMatchStats = (code) => one("mstats", code).then((d) => d?.m ?? {});
+export const loadGoals = (code) => one("goals", code).then((d) => d?.m ?? {});     // { [matchId]: { g: [goals with names], ok, n } }
+export const loadInfo = (code) => one("info", code).then((d) => d?.m ?? {});       // { [matchId]: { rf: referee, vn: venue, hc/ac: managers } }
+export const loadManagers = (code) => one("managers", code);
+export const loadReferees = (code) => one("referees", code);
 
 // meta + teams + fixtures of one competition
 export const loadComp = (code) => memo(`comp/${code}`, async () => {

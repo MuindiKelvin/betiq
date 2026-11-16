@@ -3,9 +3,9 @@ import { Alert, Button, Nav } from "react-bootstrap";
 import { useComp } from "../lib/data";
 import { dateTimeLabel } from "../lib/util";
 import { LeagueLogo, Load } from "../components/ui";
-import { MatchesTab, OverviewTab, PlayersTab, TableTab, TeamsTab, TransfersTab } from "./CompTabs";
+import { ManagersTab, MatchesTab, OverviewTab, PlayersTab, RefereesTab, TableTab, TeamsTab, TransfersTab } from "./CompTabs";
 
-const TABS = [["overview", "Overview", "grid"], ["matches", "Matches", "calendar3"], ["table", "Table", "list-ol"], ["teams", "Teams", "shield"], ["players", "Players", "person-lines-fill"], ["transfers", "Transfers", "arrow-left-right"]];
+const TABS = [["overview", "Overview", "grid"], ["matches", "Matches", "calendar3"], ["table", "Table", "list-ol"], ["teams", "Teams", "shield"], ["players", "Players", "person-lines-fill"], ["managers", "Managers", "clipboard2-data"], ["referees", "Referees", "person-badge"], ["transfers", "Transfers", "arrow-left-right"]];
 
 export default function Competition({ d, code, tab, setTab, nav, onBack }) {
   const c = useComp(code), entry = d.byCode[code];
@@ -26,7 +26,7 @@ export default function Competition({ d, code, tab, setTab, nav, onBack }) {
         const p = { code, comp: { ...comp, kind: entry?.kind ?? "league" }, byId, nav };
         // Matches/Table tabs read comp.kind through comp.meta; keep both shapes consistent
         p.comp.meta = { ...comp.meta, kind: entry?.kind ?? comp.meta.kind };
-        return { overview: <OverviewTab {...p} setTab={setTab} />, matches: <MatchesTab {...p} />, table: <TableTab {...p} />, teams: <TeamsTab {...p} />, players: <PlayersTab {...p} />, transfers: <TransfersTab {...p} /> }[tab] ?? <Alert variant="warning">Unknown tab.</Alert>;
+        return { overview: <OverviewTab {...p} setTab={setTab} />, matches: <MatchesTab {...p} />, table: <TableTab {...p} />, teams: <TeamsTab {...p} />, players: <PlayersTab {...p} />, managers: <ManagersTab {...p} />, referees: <RefereesTab {...p} />, transfers: <TransfersTab {...p} /> }[tab] ?? <Alert variant="warning">Unknown tab.</Alert>;
       }}</Load>
     </div>
   );

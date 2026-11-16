@@ -82,4 +82,86 @@ t("flat: scalars and nested names only; never throws on odd input", () => {
   assert.deepEqual(B.flat(null), {}); assert.equal(B.buildSquad({ players: [{ id: 1, name: "A" }, { name: "no id" }] }).length, 1); assert.deepEqual(B.firstArray({ x: 1, y: [1] }), [1]); assert.deepEqual(B.firstArray(null), []);
   const p = B.buildPlayerPack({ id: 1, name: "P", team: { id: 2, name: "T" } }, { results: [{ season: "2025" }] }, [{ fee: 1 }], null); assert.equal(p.profile.team, "T"); assert.equal(p.career.length, 1); assert.equal(p.transfers.length, 1); assert.deepEqual(p.log, []);
 });
+
+/* ---------- scorers and assists ---------- */
+const G = (type, team, p, r, minute = 10, extra = {}) => ({ type, team, minute, added_time: null, period: minute > 45 ? 2 : 1, player: p && { id: 1, name: p }, related_player: r && { id: 2, name: r }, ...extra });
+t("goalsRow: scorer and assist names, penalty and own goal, complete when the count matches the 90-minute score", () => {
+  const r = B.goalsRow({ commentary: [G("goal", "home", "Scorer", "Assist", 12), G("penalty_goal", "away", "Pen", null, 40), G("own_goal", "home", "Defender", "Nobody", 70), G("yellow_card", "home", "Booked"), G("corner", "away")] }, 1, 2);
+  assert.equal(r.n, 3);
+  assert.deepEqual(r.g.map((x) => [x.s, x.k, x.p, x.a]), [["h", "reg", "Scorer", "Assist"], ["a", "pen", "Pen", undefined], ["h", "og", "Defender", undefined]]);
+  assert.equal(r.complete, false, "own goal is credited to the home side in the feed, so home has 2 and the score says 1: flagged, not hidden");
+  assert.equal(B.goalsRow({ commentary: [G("goal", "home", "A", "B", 12), G("goal", "away", "C", null, 30)] }, 1, 1).complete, true);
+});
+t("goalsRow: extra-time goals are kept but flagged and never counted against the 90-minute score; a missing goal is incomplete; unknown score is unknown", () => {
+  const et = { period: 3 };
+  const r = B.goalsRow({ commentary: [G("goal", "home", "A", "B", 12), G("goal", "away", "C", "D", 105, et)] }, 1, 0);
+  assert.equal(r.complete, true); assert.equal(r.g[1].et, 1); assert.equal(r.n, 1);
+  assert.equal(B.goalsRow({ commentary: [G("goal", "home", "A", "B")] }, 2, 1).complete, false);
+  assert.equal(B.goalsRow({ commentary: [] }, 1, 0).complete, false, "empty commentary for a 1-0 is incomplete, not 'no goals'");
+  assert.equal(B.goalsRow({ commentary: [G("goal", "home", "A", "B")] }, null, null).complete, null);
+  const noPeriod = { commentary: [{ type: "goal", team: "home", minute: 95, player: { name: "X" } }] };
+  assert.equal(B.goalsRow(noPeriod, 0, 0).g[0].et, 1, "no period field: minutes after 90 count as extra time");
+  assert.equal(B.goalsRow({ commentary: [{ type: "goal", team: "home", minute: 20 }] }, 1, 0).g[0].p, undefined, "unknown scorer stays unknown");
+});
+t("goalsDue: newest first, 0-0 needs no call, complete ones skipped, incomplete retried later then given up, corrected score refetched", () => {
+  const now = 1_000_000, H = 3600, D = 86400;
+  const res = [{ id: 1, t: now - 5 * D, hg: 2, ag: 0 }, { id: 2, t: now - 1 * D, hg: 0, ag: 0 }, { id: 3, t: now - 2 * H, hg: 1, ag: 1 }, { id: 4, t: now - 4 * H, hg: 3, ag: 0 }, { id: 5, t: now - 3 * H, hg: null, ag: null }, { id: 6, t: now - 8 * H, hg: 1, ag: 0 }, { id: 7, t: now - 6 * D, hg: 1, ag: 0 }, { id: 8, t: now - 9 * H, hg: 2, ag: 1 }];
+  const have = { 4: { ok: 1, n: 3, at: now - H }, 6: { ok: 0, n: 0, at: now - 1 * H }, 7: { ok: 0, n: 0, at: now - 4 * D }, 8: { ok: 1, n: 2, at: now - 2 * H } };
+  const r = B.goalsDue(res, have, now, 10);
+  assert.deepEqual(r.fetch, [3, 8, 1], "3 and 1 are new; 8 was complete for a 2-goal score but is now 3 (corrected); 4 complete; 6 retried too soon; 7 given up; 5 unscored");
+  assert.deepEqual(r.zero, [2]);
+  assert.deepEqual(B.goalsDue(res, have, now, 1).fetch, [3], "cap respected, newest first");
+  assert.deepEqual(B.goalsDue(res, { ...have, 6: { ok: 0, n: 0, at: now - 7 * H } }, now, 10).fetch.includes(6), true, "incomplete and old enough: retried");
+});
+t("pruneGoals: keeps season matches and recent fetches, drops the rest, stays under the size limit", () => {
+  const now = 2_000_000, m = { 1: { g: [], ok: 1, at: now - 30 * 86400 }, 2: { g: [], ok: 1, at: now - 30 * 86400 }, 3: { g: [], ok: 1, at: now - 86400 } };
+  assert.deepEqual(Object.keys(B.pruneGoals(m, new Set([1]), now)).sort(), ["1", "3"]);
+  const big = Object.fromEntries(Array.from({ length: 50 }, (_, i) => [i, { g: [{ p: "x".repeat(200) }], ok: 1, at: now - i }]));
+  const kept = B.pruneGoals(big, new Set(Object.keys(big).map(Number)), now, { maxBytes: 5000 });
+  assert.ok(JSON.stringify(kept).length <= 5000 && kept[0] && !kept[49], "newest entries survive");
+});
+
+/* ---------- referee, venue, managers ---------- */
+t("infoOf: nested objects, bare names, sibling id/name fields and coaches as object, array or home_coach", () => {
+  const a = B.infoOf({ referee: { id: 7, name: " M. Oliver " }, venue: { id: 9, name: "Villa Park", city: "Birmingham", capacity: 42682 }, coaches: { home: { id: 1, name: "U. Emery" }, away: "E. Howe" }, attendance: 41000 });
+  assert.deepEqual(a, { rf: { id: 7, n: "M. Oliver" }, vn: { id: 9, n: "Villa Park", city: "Birmingham", cap: 42682 }, hc: { id: 1, n: "U. Emery" }, ac: { n: "E. Howe" }, att: 41000 });
+  const b = B.infoOf({ referee: "A. Taylor", referee_id: 5, venue_name: "Anfield", venue_id: 3, home_coach: { id: 4, name: "A. Slot" }, away_coach_name: "P. Guardiola", away_coach_id: 8 });
+  assert.deepEqual([b.rf, b.vn, b.hc, b.ac], [{ id: 5, n: "A. Taylor" }, { id: 3, n: "Anfield" }, { id: 4, n: "A. Slot" }, { id: 8, n: "P. Guardiola" }]);
+  const c = B.infoOf({ coaches: [{ side: "away", id: 2, name: "Away Boss" }, { side: "home", id: 1, name: "Home Boss" }] });
+  assert.deepEqual([c.hc, c.ac], [{ id: 1, n: "Home Boss" }, { id: 2, n: "Away Boss" }]);
+  assert.equal(B.infoOf({ id: 1, status: "finished" }), null, "nothing found: null, never an empty object or a guess");
+  assert.equal(B.infoOf(null), null); assert.equal(B.infoOf({ referee: null, venue: {}, coaches: null }), null);
+});
+t("teamExtras: venue id/capacity and coach id survive (flat() would drop them)", () => {
+  assert.deepEqual(B.teamExtras({ id: 1, venue: { id: 9, name: "Stadium", capacity: 40000, city: "X" }, coach: { id: 5, name: "Boss" } }), { vn: { id: 9, n: "Stadium", city: "X", cap: 40000 }, co: { id: 5, n: "Boss" } });
+  assert.equal(B.teamExtras({ id: 1, colors: "red" }), null);
+});
+t("manager career: record kept with nulls as nulls, home/away blocks, appointment effect only when both sides have matches", () => {
+  const rec = { matches: 38, wins: 20, draws: 8, losses: 10, points: 68, ppm: 1.79, goals_for: 60, goals_against: 40, goal_diff: 20 };
+  const s = B.spellOf({ team: { id: 3, name: "Alpha FC" }, start_date: "2022-07-01", ...rec, home: rec, away: { ...rec, ppm: null, matches: 0 }, appointment_effect: { window: 10, before: { matches: 10, points: 11, ppm: 1.1 }, after: { matches: 10, points: 21, ppm: 2.1 }, ppm_change: 1.0 } });
+  assert.equal(s.team, "Alpha FC"); assert.equal(s.team_id, 3); assert.equal("matches" in s, false, "record moved into rec");
+  assert.equal(s.rec.ppm, 1.79); assert.equal(s.away.ppm, null, "null ppm stays null, not 0"); assert.equal(s.home.wins, 20);
+  assert.deepEqual(s.ae, { window: 10, before: { matches: 10, points: 11, ppm: 1.1 }, after: { matches: 10, points: 21, ppm: 2.1 }, ppm_change: 1 });
+  assert.equal(B.aeOf(null), null); assert.equal(B.aeOf({ window: 10, before: { matches: 0, points: 0, ppm: null }, after: { matches: 5, points: 9, ppm: 1.8 }, ppm_change: null }), null, "promoted club: no 'before', no invented 0.0");
+  const pack = B.buildManagerPack({ id: 5, name: "Boss", preferred_formation: "4-3-3", team: { id: 3, name: "Alpha FC" }, record: { matches: 100, wins: 50 } }, { results: [{ team: "Old FC", matches: 10 }] }, "T");
+  assert.equal(pack.profile.preferred_formation, "4-3-3"); assert.equal(pack.profile.team, "Alpha FC"); assert.equal(pack.rec.wins, 50); assert.equal(pack.career.length, 1); assert.equal(pack.career[0].rec.matches, 10);
+});
+t("flat2 / referee and venue packs / people lists", () => {
+  assert.deepEqual(B.flat2({ id: 1, name: "R", country: { id: 2, name: "England", code: "EN" }, stats: { yellow_cards_per_match: 3.4, deep: { x: 1 }, id: 9 }, tags: [1] }), { id: 1, name: "R", country: "England", country_id: 2, stats_id: 9, country_code: "EN", stats_yellow_cards_per_match: 3.4 });
+  assert.equal(B.buildRefereePack({ id: 1, name: "R", aggregates: { red_cards: 0.1 } }).profile.aggregates_red_cards, 0.1);
+  const v = B.buildVenuePack({ id: 3, name: "V", capacity: 50000, home_team: { id: 7, name: "T" } }, { results: [{ id: 1, name: "League" }] });
+  assert.equal(v.profile.capacity, 50000); assert.equal(v.profile.home_team, "T"); assert.equal(v.competitions[0].name, "League");
+  assert.equal(B.buildPeople({ results: [{ id: 1, name: "A", team: { id: 5, name: "T" } }, { name: "no id" }] }).length, 1);
+});
+t("buildDetails keeps the match info when the event record is supplied", () => {
+  const d = B.buildDetails({ id: 5, code: "L1", commentary: { status: "finished", commentary: [] }, detail: { referee: { id: 1, name: "R" }, venue: "V" } });
+  assert.deepEqual(d.info, { rf: { id: 1, n: "R" }, vn: { n: "V" } });
+  assert.equal(B.buildDetails({ id: 5, code: "L1", commentary: { status: "finished", commentary: [] } }).info, null);
+});
+t("profileRec: the real manager profile (matches_total, wins, draws, losses) gives points and ppm by arithmetic, nothing invented", () => {
+  const r = B.profileRec({ matches_total: 40, wins: 20, draws: 10, losses: 10 });
+  assert.deepEqual([r.matches, r.points, r.ppm], [40, 70, 1.75]);
+  assert.equal(B.profileRec({ id: 1, name: "x" }), null);
+  assert.equal(B.profileRec({ matches_total: 40, wins: 20 }).points, null, "draws unknown: no points, no ppm");
+});
 console.log(`\nALL ${n} BSD HELPER TESTS PASSED`);

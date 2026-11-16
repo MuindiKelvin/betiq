@@ -30,7 +30,8 @@ const tid = (e, side) => e[`${side}_team_id`] ?? teamsOf(Math.floor(e.season_id 
 
 const OK = { leagues: ["country", "is_women", "include_inactive", "limit", "offset"], events: ["date_from", "date_to", "league_id", "season_id", "status", "team_id", "team_name", "stage", "round", "limit", "offset"],
   teams: ["country_code", "league_id", "season_id", "in_competition", "is_women", "name", "limit", "offset"], standings: ["season_id"], top: ["season_id", "team_id", "limit"], form: ["last", "league_id", "venue"],
-  transfers: ["league_id", "player_id", "team_id", "from_team_id", "to_team_id", "date_from", "date_to", "min_fee", "has_fee", "ordering", "limit", "offset"], ledger: ["team_id", "league_id", "date_from", "date_to"], none: [] };
+  transfers: ["league_id", "player_id", "team_id", "from_team_id", "to_team_id", "date_from", "date_to", "min_fee", "has_fee", "ordering", "limit", "offset"], ledger: ["team_id", "league_id", "date_from", "date_to"], none: [],
+  managers: ["name", "team_id", "league_id", "nationality_code", "tactical_profile", "team_style", "min_matches", "limit", "offset"], referees: ["name", "country_code", "league_id", "min_matches", "limit", "offset"], career: ["window"] };
 
 http.createServer((req, res) => {
   const u = new URL(req.url, "http://x"), p = u.pathname.replace(/^\/api\/v2/, ""), q = Object.fromEntries(u.searchParams);
@@ -67,6 +68,28 @@ http.createServer((req, res) => {
     if (!LEAGUES.some((l) => l.id === lid)) return send(200, page([]));
     return send(200, page(eventsOf(lid, sid)));
   }
+  if ((m = p.match(/^\/events\/(\d+)\/$/))) {
+    if (!check("none")) return; const e = findEvent(+m[1]); if (!e) return send(404, { error: true, status: 404, detail: "Not found." });
+    return send(200, { ...e, referee: { id: 700 + (e.id % 5), name: `Ref ${e.id % 5}` }, venue: { id: 900 + (e.id % 20), name: `Arena ${e.id % 20}`, city: "Testville", capacity: 30000 + (e.id % 20) * 1000 },
+      coaches: { home: { id: 500 + (e.id % 20), name: `Coach H${e.id % 20}` }, away: { id: 520 + (e.id % 20), name: `Coach A${e.id % 20}` } }, attendance: 25000 });
+  }
+  if (p === "/managers/" || p === "/referees/") {
+    const kind = p.slice(1, -1); if (!check(kind)) return; const lid = +(q.league_id ?? 0);
+    return send(200, page(Array.from({ length: 6 }, (_, i) => kind === "managers" ? { id: 500 + i, name: `Coach ${i}`, nationality_code: "XX", team: { id: lid * 1000 + i, name: `Team ${i}` }, tactical_profile: "possession", matches: 40 + i }
+      : { id: 700 + i, name: `Ref ${i}`, country_code: "XX", matches: 60 + i, yellow_cards_per_match: 3.1 + i / 10 })));
+  }
+  if ((m = p.match(/^\/managers\/(\d+)\/(career)?\/?$/))) {
+    const id = +m[1], rec = { matches: 38, wins: 20, draws: 8, losses: 10, points: 68, ppm: 1.79, goals_for: 60, goals_against: 40, goal_diff: 20 };
+    if (!m[2]) { if (!check("none")) return; return send(200, { id, name: `Coach ${id}`, nationality_code: "XX", preferred_formation: "4-3-3", tactical_profile: "possession", team: { id: 1000, name: "Alpha FC" }, record: rec }); }
+    if (!check("career")) return;
+    return send(200, { manager_id: id, results: [{ team: { id: 1000, name: "Alpha FC" }, start_date: "2023-07-01", end_date: null, ...rec, home: rec, away: { ...rec, matches: 0, ppm: null },
+      appointment_effect: { window: 10, before: { matches: 10, points: 11, ppm: 1.1 }, after: { matches: 10, points: 21, ppm: 2.1 }, ppm_change: 1.0 } }, { team: { id: 3, name: "Old FC" }, start_date: "2019-07-01", end_date: "2023-06-30", ...rec, ppm: null, appointment_effect: null }] });
+  }
+  if ((m = p.match(/^\/referees\/(\d+)\/$/))) { if (!check("none")) return; return send(200, { id: +m[1], name: `Ref ${m[1]}`, country: { id: 1, name: "Testland" }, matches: 120, aggregates: { yellow_cards_per_match: 3.4, red_cards_per_match: 0.14, fouls_per_match: 24.1, penalties_per_match: 0.31 } }); }
+  if ((m = p.match(/^\/venues\/(\d+)\/(competitions)?\/?$/))) {
+    if (!check("none")) return; const id = +m[1];
+    return send(200, m[2] ? { results: [{ id: 1, name: "Premier League" }] } : { id, name: `Arena ${id}`, city: "Testville", country: "Testland", capacity: 41000, latitude: 51.5, longitude: -0.1, home_team: { id: 1000, name: "Alpha FC" } });
+  }
   if ((m = p.match(/^\/events\/(\d+)\/(stats|lineups|commentary|h2h)\/$/))) {
     if (!check("none")) return; const id = +m[1], e = findEvent(id); if (!e) return send(404, { error: true, status: 404, detail: "Not found." });
     const fin = e.status === "finished", H = tid(e, "home"), A = tid(e, "away");
@@ -83,6 +106,7 @@ http.createServer((req, res) => {
     if (m[2] === "commentary") {
       const lines = []; let hs = 0, as = 0, n = 0;
       for (let i = 0; i < (e.home_score ?? 0) + (e.away_score ?? 0); i++) { const home = i < e.home_score; home ? hs++ : as++; lines.push({ id: "g" + n++, period: 1, minute: 10 + i * 13, added_time: null, type: i === 0 ? "penalty_goal" : "goal", team: home ? "home" : "away", player: { id: 9, name: "P. Scorer" + i }, related_player: i ? { id: 7, name: "P. Assist" } : null, text: "Goal!", score: { home: hs, away: as }, important: true }); }
+      if (id % 7 === 0 && lines.length) lines.pop();                  // data gap: one goal missing, the sync must flag it as incomplete
       lines.push({ id: "c1", period: 1, minute: 33, added_time: null, type: "yellow_card", team: "away", player: { id: 5, name: "P. Booked" }, related_player: null, text: "Yellow", score: { home: hs, away: as }, important: false }, { id: "s1", period: 2, minute: 60, added_time: null, type: "substitution", team: "home", player: { id: 9, name: "P. Off" }, related_player: { id: 14, name: "P. On" }, text: "Sub", score: { home: hs, away: as }, important: false });
       return send(200, { event_id: id, status: fin ? "finished" : "upcoming", has_play_by_play: true, commentary: fin ? lines : [] });
     }

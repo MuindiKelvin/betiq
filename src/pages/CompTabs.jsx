@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, ButtonGroup, Card, Col, Row, Table } from "react-bootstrap";
-import { loadLeaders, loadStandings, loadTransfers, useDoc, useLeague } from "../lib/data";
+import { loadLeaders, loadManagers, loadReferees, loadStandings, loadTransfers, useDoc, useLeague } from "../lib/data";
 import { first, fmtVal, standings, upcoming } from "../lib/util";
 import DataTable from "../components/DataTable";
 import { Crest, Days, FormChips, Load, MatchList, Pager, PlayerPhoto, SearchBox, Spin, Stat, hit, usePaged } from "../components/ui";
@@ -131,6 +131,24 @@ export function TransfersTab({ code, nav }) {
     </div>
   );
 }
+
+/* ---------- managers and referees active in the competition ---------- */
+function PeopleTab({ code, nav, byId, load, kind, pref, nameKeys, empty, hint }) {
+  const ld = useDoc(() => load(code), code), [q, setQ] = useState("");
+  if (ld.err) return <Alert variant="danger">{ld.err}</Alert>;
+  if (ld.data === undefined) return <Spin />;
+  const rows = (ld.data?.list ?? []).map((r) => (r.current_team_id != null && byId?.[r.current_team_id] ? { team: byId[r.current_team_id].name, ...r } : r)).filter((r) => !q.trim() || hit(q, Object.values(r).join(" ")));
+  if (!ld.data) return <Alert variant="info" className="mb-0">{empty}</Alert>;
+  return (
+    <div className="d-flex flex-column gap-3">
+      <SearchBox value={q} onChange={setQ} placeholder="Search" style={{ maxWidth: 300 }} />
+      <Card><Card.Body><DataTable rows={rows} pref={pref} max={7} nameKeys={nameKeys} onRow={(r) => nav.person({ kind, id: +r.id, code, name: first(r, ...nameKeys), row: r })} empty="Nobody matches." /></Card.Body></Card>
+      <p className="small text-body-secondary mb-0">{hint}</p>
+    </div>
+  );
+}
+export const ManagersTab = (p) => <PeopleTab {...p} load={loadManagers} kind="manager" nameKeys={["name"]} pref={[["name"], ["team"], ["country", "nationality"], ["tactical_profile"], ["preferred_formation"], ["matches_total", "matches"], ["win_pct"], ["avg_goals_scored"], ["avg_goals_conceded"]]} empty="No managers loaded for this competition yet." hint="Tap a manager for his career, record by club and what changed when he was appointed." />;
+export const RefereesTab = (p) => <PeopleTab {...p} load={loadReferees} kind="referee" nameKeys={["name"]} pref={[["name"], ["country"], ["matches"], ["avg_yellow_per_match"], ["avg_red_per_match"], ["avg_fouls_per_match"], ["avg_goals_per_match"]]} empty="No referees loaded for this competition yet." hint="Averages are per match officiated. Cards markets are not quoted in the odds feed, so this is research only." />;
 
 /* ---------- overview ---------- */
 export function OverviewTab({ code, comp, byId, nav, setTab }) {

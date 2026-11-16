@@ -72,4 +72,36 @@ if (fin) {
   const co = B.buildEvents(await need("commentary", `/events/${fin.id}/commentary/`)); ok(co.hasLines, `commentary: ${co.goals.length} goals, ${co.cards.length} cards, ${co.subs.length} subs`);
   const h2h = B.buildH2H(await need("h2h", `/events/${fin.id}/h2h/`), B.teamIdOf(fin, "home", byName), B.teamIdOf(fin, "away", byName)); ok(h2h.matches.length > 0, `head-to-head: ${h2h.matches.length} past meetings of ${h2h.total}`);
 } else console.log("  SKIP no finished match on the first page");
+
+console.log("7) Scorers, referee, venue, managers (about 12 calls). These field names are NOT spelled out in the docs: the lines below show what the API really sends");
+const snip = (v) => JSON.stringify(v)?.slice(0, 260);
+console.log("   /events/ list rows carry:", ["referee", "venue", "coaches", "home_coach", "attendance"].map((k) => `${k}=${sample && k in sample ? "yes" : "no"}`).join(" "));
+if (fin) {
+  const detail = await need("event detail", `/events/${fin.id}/`);
+  if (detail) {
+    console.log("   event detail keys:", keys(detail));
+    for (const k of ["referee", "venue", "coaches", "home_coach", "away_coach", "attendance"]) if (k in detail) console.log(`   detail.${k} =`, snip(detail[k]));
+    const info = B.infoOf(detail); ok(!!info, info ? `infoOf read: ${JSON.stringify(info)}` : "infoOf found NOTHING: send me the detail.* lines above");
+    ok(!!info?.rf, info?.rf ? "referee found" : "no referee on this match (may be unassigned) or the field name differs");
+    ok(!!info?.vn, info?.vn ? "venue found" : "no venue found");
+    ok(!!(info?.hc && info?.ac), info?.hc && info?.ac ? "both managers found" : "managers NOT found: send me detail.coaches");
+    const co = await need("commentary", `/events/${fin.id}/commentary/`), gr = B.goalsRow(co, B.num(detail.home_score), B.num(detail.away_score));
+    ok(gr.complete === true || (gr.n === 0 && gr.complete === null), `scorers: ${gr.n} regulation goal(s) found, complete=${gr.complete} (score ${detail.home_score}-${detail.away_score}); first: ${snip(gr.g[0])}`);
+    const inc = await need("incidents", `/events/${fin.id}/incidents/`), list = B.firstArray(inc, ["incidents", "results"]);
+    console.log("   incidents (undocumented goal shape), first goal:", snip(list.find((x) => x?.type === "goal")) ?? "none", "| top-level keys:", keys(inc));
+  }
+}
+const mg = B.firstArray(await need("managers", "/managers/", { league_id: L.id, limit: 3 }), ["results"]);
+ok(mg.length > 0, `managers list keys: ${keys(mg[0])}`);
+if (mg[0]) {
+  const mp = await need("manager", `/managers/${mg[0].id}/`); ok(!!mp, "manager profile keys: " + keys(mp));
+  const cp = await need("career", `/managers/${mg[0].id}/career/`), spells = B.firstArray(cp, ["career", "spells", "results"]).map(B.spellOf);
+  ok(spells.length > 0, `career spells ${spells.length}; first: ${snip(spells[0])}; appointment_effect present: ${spells.some((s) => s.ae)}`);
+}
+const rf = B.firstArray(await need("referees", "/referees/", { league_id: L.id, limit: 3 }), ["results"]);
+ok(rf.length > 0, `referees list keys: ${keys(rf[0])}`);
+if (rf[0]) { const rp = await need("referee", `/referees/${rf[0].id}/`); ok(!!rp, "referee profile (flattened) keys: " + keys(B.flat2(rp))); }
+const vn = B.firstArray(await need("venues", "/venues/", { team_id: T?.id, limit: 3 }), ["results"]);
+ok(vn.length > 0, `venues list keys: ${keys(vn[0])}`);
+if (vn[0]) { const vp = await need("venue", `/venues/${vn[0].id}/`); ok(!!vp, "venue profile (flattened) keys: " + keys(B.flat2(vp))); }
 console.log(`\nCalls left today: ${left ?? "unlimited / not reported"}. Send me any FAIL lines and the key lists printed above.`);

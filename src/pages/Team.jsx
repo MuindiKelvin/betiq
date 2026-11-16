@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Nav, Row, Table } from "react-bootstrap";
-import { loadSquad, loadTransfers, useComp, useDoc, useLeague } from "../lib/data";
+import { fresh, loadManagers, loadSquad, loadTransfers, useComp, useDoc, useLeague } from "../lib/data";
+import { managerOfTeam } from "../lib/people";
 import { teamForm } from "../lib/model";
 import { ageOf, first, fmtVal } from "../lib/util";
 import DataTable from "../components/DataTable";
@@ -54,7 +55,11 @@ export default function Team({ team, d, nav, onBack }) {
   const entry = c.data?.teams.find((t) => t.id === id) ?? d.byId[id] ?? { id, name: `Team ${id}` };
   const comp = d.byCode[code], st = entry.st;
   const byId = useMemo(() => { const m = { ...d.byId }; for (const t of c.data?.teams ?? []) m[t.id] = { ...t, league: code }; return m; }, [d.byId, c.data, code]);
-  const prof = sq.data?.profile ?? {}, facts = [["Venue", first(prof, "venue", "stadium", "venue_name")], ["Coach", first(prof, "coach", "manager", "coach_name")], ["Country", first(prof, "country") ?? entry.country], ["City", first(prof, "city")], ["Founded", first(prof, "founded", "founded_year")]].filter(([, v]) => v != null && v !== "");
+  const mgrs = useDoc(() => loadManagers(code), code), ex = sq.data?.extra ?? {}, mg = managerOfTeam(mgrs.data?.list, id, entry.name);
+  const vId = ex.vn?.id ?? (Number(sq.data?.profile?.venue_id) || null), vdoc = useDoc(() => (vId != null ? fresh("venues", vId) : null), vId);
+  const venue = vId != null || ex.vn ? { ...(ex.vn ?? {}), id: vId, n: ex.vn?.n ?? vdoc.data?.profile?.name ?? first(sq.data?.profile ?? {}, "venue"), cap: ex.vn?.cap ?? vdoc.data?.profile?.capacity } : null;
+  const coach = ex.co ?? (mg ? { id: +mg.id, n: mg.name } : null);
+  const prof = sq.data?.profile ?? {}, facts = [["Venue", venue ? null : first(prof, "venue", "stadium", "venue_name")], ["Coach", coach ? null : first(prof, "coach", "manager", "coach_name")], ["Country", first(prof, "country") ?? entry.country], ["City", first(prof, "city")], ["Founded", first(prof, "founded", "founded_year")]].filter(([, v]) => v != null && v !== "");
   const formRes = lg.data ? teamForm(lg.data.results, id) : null;
   const tRows = (tr.data?.list ?? []).filter((r) => [r.from_team_id, r.to_team_id, r.team_id].includes(id) || [r.from_team, r.to_team].includes(entry.name));
   const tabs = [["overview", "Overview"], ["squad", `Squad${sq.data?.players?.length ? ` (${sq.data.players.length})` : ""}`], ["matches", "Matches"], ["transfers", "Transfers"]];
@@ -64,7 +69,12 @@ export default function Team({ team, d, nav, onBack }) {
       <Card className="pitch"><Card.Body className="d-flex align-items-center gap-3 flex-wrap">
         <Crest team={entry} size={72} />
         <div className="me-auto"><h1 className="h3 mb-1">{entry.name}</h1><div className="text-body-secondary small">{comp?.name}{comp?.country ? ` · ${comp.country}` : ""}</div>
-          {facts.length > 0 && <div className="d-flex flex-wrap gap-3 mt-2 small">{facts.map(([k, v]) => <span key={k}><span className="text-body-secondary">{k}: </span>{fmtVal(k, v)}</span>)}</div>}</div>
+          <div className="d-flex flex-wrap gap-3 mt-2 small">
+            {venue?.id != null && <span><span className="text-body-secondary">Venue: </span><Button variant="link" size="sm" className="p-0 align-baseline" onClick={() => nav.person({ kind: "venue", id: venue.id, code, name: venue.n })}>{venue.n ?? "Stadium details"}</Button>{venue.cap ? <span className="text-body-secondary"> ({venue.cap.toLocaleString()})</span> : null}</span>}
+            {venue && venue.id == null && <span><span className="text-body-secondary">Venue: </span>{venue.n}</span>}
+            {coach?.id != null && <span><span className="text-body-secondary">Coach: </span><Button variant="link" size="sm" className="p-0 align-baseline" onClick={() => nav.person({ kind: "manager", id: coach.id, code, name: coach.n })}>{coach.n}</Button></span>}
+            {coach && coach.id == null && <span><span className="text-body-secondary">Coach: </span>{coach.n}</span>}
+            {facts.filter(([, v]) => v != null && v !== "").map(([k, v]) => <span key={k}><span className="text-body-secondary">{k}: </span>{fmtVal(k, v)}</span>)}</div></div>
         <FormChips r={(formRes?.form ?? String(st?.form ?? "").slice(-5).split("").filter((x) => "WDL".includes(x)))} />
       </Card.Body></Card>
       <Nav className="nav-underline flex-nowrap overflow-auto comp-tabs" activeKey={tab} onSelect={setTab}>{tabs.map(([k, l]) => <Nav.Item key={k}><Nav.Link eventKey={k} className="text-nowrap">{l}</Nav.Link></Nav.Item>)}</Nav>

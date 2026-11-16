@@ -7,7 +7,8 @@
 //   * resumable   - every timestamp lives in the stored documents; an interrupted run simply continues next time
 //
 // Env: BSD_API_KEY (required). Optional: SYNC_LEAGUES (all | 1,3,4), SYNC_EXCLUDE, SEASONS_BACK, MAX_REQUESTS, QUOTA_RESERVE,
-//      TEAMPACK_PER_RUN, MSTATS_PER_RUN, H2H_PER_RUN, PLAYERS_PER_RUN, REQUESTS_PER_RUN, REQUESTS_ONLY=1, DRY_RUN=1, BSD_BASE
+//      TEAMPACK_PER_RUN, MSTATS_PER_RUN, H2H_PER_RUN, PLAYERS_PER_RUN, REQUESTS_PER_RUN, REQUESTS_ONLY=1, DRY_RUN=1, BSD_BASE,
+//      GOALS_PER_COMP, GOALS_PER_RUN, GOALS_FROM_FINALS_PER_RUN, GOALS_RESERVE, INFO_UPCOMING, INFO_DETAIL_CALLS, INFO_PER_RUN, INFO_TTL_HOURS, VENUES_PER_RUN, VENUE_TTL_DAYS, REFEREES_PER_RUN, REFEREE_TTL_DAYS, PEOPLE_TTL_HOURS
 import fs from "node:fs";
 import path from "node:path";
 import * as B from "./lib/bsd.mjs";
@@ -29,6 +30,10 @@ const PACK_N = int("TEAMPACK_PER_RUN", 400), PACK_TTL_D = int("TEAMPACK_TTL_DAYS
 const MS_COMP = int("MSTATS_PER_COMP", 15), MS_RUN = int("MSTATS_PER_RUN", 600);
 const H2H_UP = int("H2H_UPCOMING", 3), H2H_RUN = int("H2H_PER_RUN", 250), H2H_TTL_D = int("H2H_TTL_DAYS", 7);
 const PLAYERS_RUN = int("PLAYERS_PER_RUN", 100), REQS_RUN = int("REQUESTS_PER_RUN", 60);
+const GOALS_COMP = int("GOALS_PER_COMP", 25), GOALS_RUN = int("GOALS_PER_RUN", 300), GOALS_FIN = int("GOALS_FROM_FINALS_PER_RUN", 60), GOALS_RESERVE = int("GOALS_RESERVE", 1000);
+const INFO_UP = int("INFO_UPCOMING", 3), INFO_DETAIL = int("INFO_DETAIL_CALLS", 0), INFO_RUN = int("INFO_PER_RUN", 250), INFO_TTL_H = int("INFO_TTL_HOURS", 24);      // referee / venue / managers of the next fixtures
+const VEN_RUN = int("VENUES_PER_RUN", 100), VEN_TTL_D = int("VENUE_TTL_DAYS", 30);   // venue names (the match feed only carries venue ids)
+const REF_RUN = int("REFEREES_PER_RUN", 0), REF_TTL_D = int("REFEREE_TTL_DAYS", 7), PEOPLE_TTL_H = int("PEOPLE_TTL_HOURS", 24);
 const TOP = [1, 3, 4, 5, 6, 7, 8, 83, 64, 10, 2, 12, 18, 17];   // most used competitions: refreshed more often and synced first
 
 if (!KEY) { console.error("BSD_API_KEY is missing. Put it in .env (local) or a GitHub secret. Register free at https://sports.bzzoiro.com/register/"); process.exit(1); }
@@ -105,7 +110,7 @@ const soft = async (what, fn, fallback = null) => { try { return await fn(); } c
 async function openComp(lg) {
   const meta = (await store.get(`meta/${lg.code}`)) ?? { code: lg.code };
   const teams = new Map(((await store.get(`teams/${lg.code}`))?.list ?? []).map((t) => [t.id, t]));
-  return { ...lg, meta, teams, cur: new Map(), fixtures: new Map(), mstats: null, mstatsDirty: false };
+  return { ...lg, meta, teams, cur: new Map(), fixtures: new Map(), mstats: null, mstatsDirty: false, goals: null, goalsDirty: false, info: null, infoDirty: false };
 }
 function setTeam(L, id, name, extra = {}) {
   if (id == null) return;
@@ -124,6 +129,8 @@ async function flush(L) {
   await put(`teams/${L.code}`, { code: L.code, list: [...L.teams.values()], updated: now });
   await put(`meta/${L.code}`, { ...L.meta, code: L.code, id: L.id, name: L.name, country: L.country, kind: L.kind, women: L.women, updated: now });
   if (L.mstatsDirty) await put(`mstats/${L.code}`, { code: L.code, m: L.mstats, updated: now });
+  if (L.goalsDirty) { const keep = new Set([...L.cur.keys()]); await put(`goals/${L.code}`, { code: L.code, m: B.pruneGoals(L.goals, keep, Math.floor(Date.now() / 1000)), updated: now }); L.goalsDirty = false; }
+  if (L.infoDirty) { const keep = new Set([...L.cur.keys(), ...L.fixtures.keys()]); await put(`info/${L.code}`, { code: L.code, m: Object.fromEntries(Object.entries(L.info).filter(([id]) => keep.has(+id))), updated: now }); L.infoDirty = false; }
 }
 
 /* ---------- competition jobs ---------- */
@@ -142,7 +149,10 @@ async function refreshCore(L) {
   }
   const evs = await pages("/events/", { league_id: L.id, season_id: m.current, ...(WIN ? { date_from: isoDay(WIN.from), date_to: isoDay(WIN.to) } : {}) });
   const byName = new Map([...L.teams.values()].map((t) => [B.norm(t.name), t.id])), skips = {};
+  L.info ??= (await store.get(`info/${L.code}`))?.m ?? {};
   for (const e of evs) {
+    const inf = B.infoOf(e);                                    // if the list rows already carry referee / venue / coaches, every match gets them for free
+    if (inf && e.id != null) { L.info[e.id] = { ...(L.info[e.id] ?? {}), ...inf, at: Math.floor(Date.now() / 1000) }; L.infoDirty = true; }
     const r = B.toRow(e, byName);
     if (r.skip) { const k = r.raw ? `${r.skip}:${r.raw}` : r.skip; skips[k] = (skips[k] ?? 0) + 1; continue; }
     for (const [id, name] of r.names) setTeam(L, id, name);
@@ -231,6 +241,99 @@ async function autoH2H(L, cap) {
   return n;
 }
 
+/* ---------- scorers and assists (names) ---------- */
+// One /events/{id}/commentary/ call per finished match that had a goal (0-0 needs none). Three feeds, all resumable:
+//   1. users' "match details" requests also store the goals (no extra call)
+//   2. goalsFromFinals: matches the live runner saw finish (live/finals), within one runner/sync cycle of full time
+//   3. goalsFor: per competition, newest finished matches first, GOALS_PER_COMP per competition and GOALS_PER_RUN per run
+// None of them spends the last GOALS_RESERVE calls of the day, so the core data sync and users' requests always keep working.
+const roomForGoals = () => remaining === null || remaining > GOALS_RESERVE;
+const goalEntry = (row, nowS) => ({ g: row.g, ok: row.complete === true ? 1 : 0, n: row.n, at: nowS });
+async function goalsFor(L, cap) {
+  L.goals ??= (await store.get(`goals/${L.code}`))?.m ?? {};
+  const nowS = Math.floor(Date.now() / 1000), { fetch, zero } = B.goalsDue([...L.cur.values()], L.goals, nowS, cap);
+  for (const id of zero) { L.goals[id] = { g: [], ok: 1, n: 0, at: nowS }; L.goalsDirty = true; }
+  let n = 0;
+  for (const id of fetch) {
+    if (!roomForGoals()) break;
+    const r = L.cur.get(id), d = await soft(`${L.code} goals ${id}`, () => api(`/events/${id}/commentary/`));
+    if (!d) continue;
+    L.goals[id] = goalEntry(B.goalsRow(d, r.hg, r.ag), nowS); L.goalsDirty = true; n++;
+  }
+  return n;
+}
+async function goalsFromFinals(cap) {
+  const fin = Object.values((await store.get("live/finals"))?.m ?? {}).filter((f) => f && f.lg != null && f.hg != null && f.ag != null).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  const docs = new Map(), nowS = Math.floor(Date.now() / 1000), dirty = new Set();
+  let n = 0;
+  for (const f of fin) {
+    const code = B.codeOf(f.lg);
+    if (!docs.has(code)) docs.set(code, (await store.get(`goals/${code}`)) ?? { code, m: {} });
+    const doc = docs.get(code), t = f.ko ? Math.floor(Date.parse(f.ko) / 1000) : nowS;
+    const { fetch, zero } = B.goalsDue([{ id: f.id, t: Number.isFinite(t) ? t : nowS, hg: f.hg, ag: f.ag }], doc.m, nowS, 1);
+    if (zero.length) { doc.m[f.id] = { g: [], ok: 1, n: 0, at: nowS }; dirty.add(code); }
+    if (!fetch.length || n >= cap || !roomForGoals()) continue;
+    const d = await soft(`${code} goals ${f.id}`, () => api(`/events/${f.id}/commentary/`));
+    if (!d) continue;
+    doc.m[f.id] = goalEntry(B.goalsRow(d, f.hg, f.ag), nowS); dirty.add(code); n++;
+  }
+  for (const code of dirty) { const doc = docs.get(code); await put(`goals/${code}`, { ...doc, m: B.pruneGoals(doc.m, new Set(Object.keys(doc.m).map(Number)), nowS), updated: iso() }); }
+  if (n) log(`goals from live finals: ${n} match(es)`);
+  return n;
+}
+
+/* ---------- referee / venue / managers of the next fixtures, and lists per competition ---------- */
+// /events/{id}/ is documented to carry coaches, referee and venue (field names are not spelled out: B.infoOf reads the plausible shapes; npm run probe prints the real one).
+async function infoFor(L, cap, refIds) {
+  L.info ??= (await store.get(`info/${L.code}`))?.m ?? {};
+  const now = Math.floor(Date.now() / 1000), up = [...L.fixtures.values()].filter((f) => f.s === "notstarted").sort((a, b) => a.t - b.t).slice(0, INFO_UP);
+  let n = 0;
+  for (const f of up) {
+    const old = L.info[f.id];
+    if (INFO_DETAIL && n < cap && !(old?.dat && now - old.dat < INFO_TTL_H * 3600)) {      // off by default: the match list already carries the ids
+      const d = await soft(`${L.code} info ${f.id}`, () => api(`/events/${f.id}/`));
+      if (d) { L.info[f.id] = { ...(old ?? {}), ...(B.infoOf(d) ?? {}), at: now, dat: now }; L.infoDirty = true; n++; }
+    }
+    const rid = L.info[f.id]?.rf?.id; if (rid != null) refIds.add(rid);
+  }
+  return n;
+}
+async function peopleLists(L) {                                  // managers and referees active in the competition: 1 call each (200 per page)
+  if (hoursSince(L.meta.peopleAt) < PEOPLE_TTL_H) return 0;
+  let n = 0;
+  for (const [kind, coll] of [["managers", "managers"], ["referees", "referees"]]) {
+    const list = await soft(`${L.code} ${kind}`, async () => B.buildPeople({ results: await pages(`/${kind}/`, { league_id: L.id }, 2) }));
+    if (list) { await put(`${coll}/${L.code}`, { code: L.code, list, updated: iso() }); n++; }
+  }
+  if (n) L.meta.peopleAt = iso();
+  return n;
+}
+async function venuePacks(ids) {                                 // name, city and capacity of the venues seen in matches: 1 call per venue, refreshed every VENUE_TTL_DAYS
+  let n = 0;
+  for (const id of ids) {
+    if (n >= VEN_RUN || !roomForGoals()) break;
+    const old = await store.get(`venues/${id}`);
+    if (old && hoursSince(old.updated) < VEN_TTL_D * 24) continue;
+    const d = await soft(`venue ${id}`, () => api(`/venues/${id}/`));
+    if (d) { await put(`venues/${id}`, { id, ...B.buildVenuePack(d, null), competitions: old?.competitions ?? [] }); n++; }
+  }
+  if (n) log(`venues: ${n} loaded`);
+  return n;
+}
+async function refereePacks(ids) {                               // profile + per-match aggregates of referees assigned to upcoming matches
+  let n = 0;
+  for (const id of ids) {
+    if (n >= REF_RUN) break;
+    const old = await store.get(`officials/${id}`);
+    if (old && hoursSince(old.updated) < REF_TTL_D * 24) continue;
+    const d = await soft(`referee ${id}`, () => api(`/referees/${id}/`));
+    if (d) { await put(`officials/${id}`, { id, ...B.buildRefereePack(d) }); n++; }
+  }
+  return n;
+}
+async function managerPack(id) { const [p, c] = [await api(`/managers/${id}/`), await soft(`manager ${id} career`, () => api(`/managers/${id}/career/`))]; return B.buildManagerPack(p, c); }
+async function venuePack(id) { const [p, c] = [await api(`/venues/${id}/`), await soft(`venue ${id} competitions`, () => api(`/venues/${id}/competitions/`))]; return B.buildVenuePack(p, c); }
+
 /* ---------- rolling jobs: squads + team statistics, player profiles ---------- */
 async function teamPacks(idx, comps, packUsed) {
   const now = Date.now() / 1000, due = [...idx.values()].filter((t) => !t.pk || now - t.pk > PACK_TTL_D * 86400)
@@ -252,7 +355,7 @@ async function teamPacks(idx, comps, packUsed) {
         const entry = L.teams.get(t.id) ?? { id: t.id, name: t.name };
         const st = B.buildTeamSt(form); if (st) entry.st = st;
         L.teams.set(t.id, entry);
-        await put(`squads/${t.id}`, { id: t.id, name: t.name, code, profile: B.flat(profile ?? {}), players: B.buildSquad(squad), updated: iso() });
+        await put(`squads/${t.id}`, { id: t.id, name: t.name, code, profile: B.flat(profile ?? {}), extra: B.teamExtras(profile), players: B.buildSquad(squad), updated: iso() });
         t.pk = now; n++;
       }
     } finally { await flush(L); }
@@ -287,9 +390,12 @@ async function fulfillRequests() {
     try {
       if (d.kind === "details" && Number.isFinite(+d.eid) && d.league) {
         const eid = +d.eid;
-        const [lineups, commentary, stats] = [await soft(`lineups ${eid}`, () => api(`/events/${eid}/lineups/`)), await soft(`commentary ${eid}`, () => api(`/events/${eid}/commentary/`)), await soft(`stats ${eid}`, () => api(`/events/${eid}/stats/`))];
+        const [lineups, commentary, stats, detail] = [await soft(`lineups ${eid}`, () => api(`/events/${eid}/lineups/`)), await soft(`commentary ${eid}`, () => api(`/events/${eid}/commentary/`)), await soft(`stats ${eid}`, () => api(`/events/${eid}/stats/`)), await soft(`event ${eid}`, () => api(`/events/${eid}/`))];
         if (!lineups && !commentary && !stats) throw new ApiError("nothing available", 0);
-        await put(`details/${eid}`, B.buildDetails({ id: eid, code: d.league, lineups, commentary, stats }));
+        await put(`details/${eid}`, B.buildDetails({ id: eid, code: d.league, lineups, commentary, stats, detail }));
+        const inf = detail ? B.infoOf(detail) : null, hg = B.num(detail?.home_score), ag = B.num(detail?.away_score), nowS = Math.floor(Date.now() / 1000);
+        if (inf) { const doc = (await store.get(`info/${d.league}`)) ?? { code: d.league, m: {} }; doc.m[eid] = { ...(doc.m[eid] ?? {}), ...inf, at: nowS, dat: nowS }; await put(`info/${d.league}`, { ...doc, updated: iso() }); }
+        if (commentary?.status === "finished" && hg !== null && ag !== null) { const doc = (await store.get(`goals/${d.league}`)) ?? { code: d.league, m: {} }; doc.m[eid] = goalEntry(B.goalsRow(commentary, hg, ag), nowS); await put(`goals/${d.league}`, { ...doc, updated: iso() }); }
         const row = stats ? B.statsRow(stats) : null;
         if (row) { const doc = (await store.get(`mstats/${d.league}`)) ?? { code: d.league, m: {} }; doc.m[eid] = row; await put(`mstats/${d.league}`, { ...doc, updated: iso() }); }
         log(`request: details for match ${eid}`);
@@ -298,6 +404,15 @@ async function fulfillRequests() {
         const doc = B.buildH2H(data, +d.h, +d.a);
         await put(`h2h/${doc.ids[0]}_${doc.ids[1]}`, { ...doc, fetched: iso() });
         log(`request: head-to-head ${doc.ids.join(" v ")} (${doc.matches.length} meetings)`);
+      } else if (d.kind === "manager" && Number.isFinite(+d.oid)) {
+        await put(`coaches/${+d.oid}`, { id: +d.oid, ...(await managerPack(+d.oid)) });
+        log(`request: manager ${d.oid}`);
+      } else if (d.kind === "referee" && Number.isFinite(+d.oid)) {
+        await put(`officials/${+d.oid}`, { id: +d.oid, ...B.buildRefereePack(await api(`/referees/${+d.oid}/`)) });
+        log(`request: referee ${d.oid}`);
+      } else if (d.kind === "venue" && Number.isFinite(+d.oid)) {
+        await put(`venues/${+d.oid}`, { id: +d.oid, ...(await venuePack(+d.oid)) });
+        log(`request: venue ${d.oid}`);
       } else if (d.kind === "player" && Number.isFinite(+d.pid)) {
         const pack = await fetchPlayer(+d.pid);
         if (!pack) throw new ApiError("player not found", 404);
@@ -314,6 +429,7 @@ const opened = [];
 let catalog = null, idx = new Map();
 try {
   await fulfillRequests();
+  await goalsFromFinals(GOALS_FIN);                         // scorers of matches the live runner saw finish (0 calls when there are none)
   if (!REQ_ONLY) {
     // catalog: every competition BSD covers
     const prev = await store.get("catalog/main");
@@ -332,7 +448,8 @@ try {
     const rank = (l) => (TOP.includes(l.id) ? TOP.indexOf(l.id) : 1000 + l.id), ttl = (l) => (TOP.includes(l.id) ? TOP_TTL_H : TTL_H);
     const due = [...comps.values()].filter((l) => FORCE || hoursSince(l.s?.at) > ttl(l)).sort((a, b) => (Date.parse(a.s?.at) || 0) - (Date.parse(b.s?.at) || 0) || rank(a) - rank(b));
     const coreStart = used, leaderIds = [], packUsed = new Map();
-    let ms = 0, h2h = 0;
+    let ms = 0, h2h = 0, goals = 0, info = 0;
+    const refIds = new Set(), venIds = new Set();
     for (const lg of due) {
       if (used - coreStart >= CORE_BUDGET) { log("core budget used; remaining competitions continue next run"); break; }
       const L = await openComp(lg); opened.push(L);
@@ -343,6 +460,10 @@ try {
         if (hoursSince(L.meta.transfersAt) > TRANSFERS_TTL_H) await soft(`${L.code} transfers`, () => refreshTransfers(L));
         if (ms < MS_RUN) ms += await matchStats(L, Math.min(MS_COMP, MS_RUN - ms));
         if (h2h < H2H_RUN) h2h += await autoH2H(L, H2H_RUN - h2h);
+        if (goals < GOALS_RUN) goals += await goalsFor(L, Math.min(GOALS_COMP, GOALS_RUN - goals));
+        if (info < INFO_RUN) info += await infoFor(L, INFO_RUN - info, refIds);
+        await soft(`${L.code} managers/referees`, () => peopleLists(L));
+        for (const e of Object.values(L.info ?? {})) if (e?.vn?.id != null) venIds.add(e.vn.id);
         for (const t of L.teams.values()) if (t.active) { const o = idx.get(t.id); if (!o || (o.code !== L.code && comps.get(o.code)?.kind !== "league" && L.kind === "league")) idx.set(t.id, { id: t.id, name: t.name, code: L.code, pk: o?.pk }); }
         const results = Object.values(L.meta.counts?.results ?? {}).reduce((a, b) => a + b, 0);
         const c = catalog.leagues.find((x) => x.id === L.id); if (c) c.s = { at: iso(), teams: [...L.teams.values()].filter((t) => t.active).length, results, fixtures: L.fixtures.size };
@@ -356,6 +477,8 @@ try {
     }
     await teamPacks(idx, comps, packUsed);
     await playerPacks([...new Set(leaderIds)]);
+    await refereePacks([...refIds]);
+    await venuePacks([...venIds]);
   }
   log("Sync finished.");
 } catch (e) {
