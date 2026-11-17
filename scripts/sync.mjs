@@ -6,7 +6,15 @@
 //   * prioritised - users' queued requests first, then competitions by staleness, then rolling jobs (squads, stats, players)
 //   * resumable   - every timestamp lives in the stored documents; an interrupted run simply continues next time
 //
-// Env: BSD_API_KEY (required). Optional: SYNC_LEAGUES (all | 1,3,4), SYNC_EXCLUDE, SEASONS_BACK, MAX_REQUESTS, QUOTA_RESERVE,
+// Flags:
+//   --full         force-refresh EVERY competition (ignores the refresh TTLs). Run it repeatedly: each run continues with the stalest ones.
+//   --lean         cheap mode for coverage: competitions outside TOP skip leaders, transfers and deep past seasons (1 season back max).
+//                  Combine with --full to load every competition in the fewest calls:   npm run sync:local -- --full --lean
+//   --back=N --ahead=N   only current-season matches dated within N days back / ahead of today (implies --force)
+//   --force        same as --full
+//   --requests-only  only serve users' queued requests
+//
+// Env: BSD_API_KEY (required). Optional: SYNC_LEAGUES (all | 1,3,4), SYNC_EXCLUDE, SEASONS_BACK, MAX_REQUESTS, QUOTA_RESERVE, CORE_BUDGET, LEAN=1,
 //      TEAMPACK_PER_RUN, MSTATS_PER_RUN, H2H_PER_RUN, PLAYERS_PER_RUN, REQUESTS_PER_RUN, REQUESTS_ONLY=1, DRY_RUN=1, BSD_BASE,
 //      GOALS_PER_COMP, GOALS_PER_RUN, GOALS_FROM_FINALS_PER_RUN, GOALS_RESERVE, INFO_UPCOMING, INFO_DETAIL_CALLS, INFO_PER_RUN, INFO_TTL_HOURS, VENUES_PER_RUN, VENUE_TTL_DAYS, REFEREES_PER_RUN, REFEREE_TTL_DAYS, PEOPLE_TTL_HOURS
 import fs from "node:fs";
@@ -16,14 +24,16 @@ import * as B from "./lib/bsd.mjs";
 const env = process.env, int = (k, d) => (Number.isFinite(+env[k]) && env[k] !== undefined && env[k] !== "" ? +env[k] : d);
 const KEY = env.BSD_API_KEY, BASE = (env.BSD_BASE || "https://sports.bzzoiro.com/api/v2").replace(/\/$/, "");
 const DRY = env.DRY_RUN === "1", REQ_ONLY = env.REQUESTS_ONLY === "1" || process.argv.includes("--requests-only");
+const LEAN = env.LEAN === "1" || process.argv.includes("--lean");
 // --back=N --ahead=N: only fetch current-season matches dated within N days back / N days ahead of today (merged into what is already stored).
 // Either flag implies --force (ignore the refresh TTLs). The missing side defaults to 365 days.
 const flag = (n) => { const a = process.argv.find((x) => x.startsWith(`--${n}=`)); const v = a ? +a.split("=")[1] : NaN; return Number.isFinite(v) && v >= 0 ? v : null; };
-const W_BACK = flag("back"), W_AHEAD = flag("ahead"), FORCE = process.argv.includes("--force") || W_BACK !== null || W_AHEAD !== null;
+const W_BACK = flag("back"), W_AHEAD = flag("ahead");
+const FORCE = process.argv.includes("--force") || process.argv.includes("--full") || W_BACK !== null || W_AHEAD !== null;
 const WIN = W_BACK !== null || W_AHEAD !== null ? { from: Date.now() - (W_BACK ?? 365) * 864e5, to: Date.now() + (W_AHEAD ?? 365) * 864e5 } : null;
-const MAX = int("MAX_REQUESTS", 6000), RESERVE = int("QUOTA_RESERVE", REQ_ONLY ? 20 : 500), PAUSE = int("REQUEST_PAUSE_MS", 70);
+const MAX = int("MAX_REQUESTS", 6500), RESERVE = int("QUOTA_RESERVE", REQ_ONLY ? 20 : 500), PAUSE = int("REQUEST_PAUSE_MS", 70);
 const BACK = int("SEASONS_BACK", 5);                       // past seasons per competition (head-to-head depth, model data)
-const CORE_BUDGET = int("CORE_BUDGET", 3500);              // calls for competition refreshes per run
+const CORE_BUDGET = int("CORE_BUDGET", 5000);              // calls for competition refreshes per run
 const TOP_TTL_H = int("TOP_TTL_HOURS", 3), TTL_H = int("CORE_TTL_HOURS", 12);
 const LEADERS_TTL_H = int("LEADERS_TTL_HOURS", 24), TRANSFERS_TTL_H = int("TRANSFERS_TTL_HOURS", 24), TRANSFER_DAYS = int("TRANSFER_DAYS", 180);
 const PACK_N = int("TEAMPACK_PER_RUN", 400), PACK_TTL_D = int("TEAMPACK_TTL_DAYS", 4);
@@ -34,7 +44,11 @@ const GOALS_COMP = int("GOALS_PER_COMP", 25), GOALS_RUN = int("GOALS_PER_RUN", 3
 const INFO_UP = int("INFO_UPCOMING", 3), INFO_DETAIL = int("INFO_DETAIL_CALLS", 0), INFO_RUN = int("INFO_PER_RUN", 250), INFO_TTL_H = int("INFO_TTL_HOURS", 24);      // referee / venue / managers of the next fixtures
 const VEN_RUN = int("VENUES_PER_RUN", 100), VEN_TTL_D = int("VENUE_TTL_DAYS", 30);   // venue names (the match feed only carries venue ids)
 const REF_RUN = int("REFEREES_PER_RUN", 0), REF_TTL_D = int("REFEREE_TTL_DAYS", 7), PEOPLE_TTL_H = int("PEOPLE_TTL_HOURS", 24);
+const INFO_KEEP = int("INFO_KEEP_RESULTS", 800);             // newest finished matches whose referee/venue info is stored per competition
 const TOP = [1, 3, 4, 5, 6, 7, 8, 83, 64, 10, 2, 12, 18, 17];   // most used competitions: refreshed more often and synced first
+const isTop = (l) => TOP.includes(l.id);
+const deep = (l) => !LEAN || isTop(l);                            // lean mode: only TOP competitions get leaders, transfers and the full past-season depth
+const backFor = (l) => (deep(l) ? BACK : Math.min(BACK, 1));
 
 if (!KEY) { console.error("BSD_API_KEY is missing. Put it in .env (local) or a GitHub secret. Register free at https://sports.bzzoiro.com/register/"); process.exit(1); }
 
@@ -130,16 +144,17 @@ async function flush(L) {
   await put(`meta/${L.code}`, { ...L.meta, code: L.code, id: L.id, name: L.name, country: L.country, kind: L.kind, women: L.women, updated: now });
   if (L.mstatsDirty) await put(`mstats/${L.code}`, { code: L.code, m: L.mstats, updated: now });
   if (L.goalsDirty) { const keep = new Set([...L.cur.keys()]); await put(`goals/${L.code}`, { code: L.code, m: B.pruneGoals(L.goals, keep, Math.floor(Date.now() / 1000)), updated: now }); L.goalsDirty = false; }
-  if (L.infoDirty) { const keep = new Set([...L.cur.keys(), ...L.fixtures.keys()]); await put(`info/${L.code}`, { code: L.code, m: Object.fromEntries(Object.entries(L.info).filter(([id]) => keep.has(+id))), updated: now }); L.infoDirty = false; }
+  // info: keep all fixtures + newest results only (huge competitions like friendlies would exceed Firestore's per-document limits)
+  if (L.infoDirty) { const keep = new Set([...L.fixtures.keys(), ...[...L.cur.values()].sort((a, b) => b.t - a.t).slice(0, INFO_KEEP).map((r) => r.id)]); await put(`info/${L.code}`, { code: L.code, m: Object.fromEntries(Object.entries(L.info).filter(([id]) => keep.has(+id))), updated: now }); L.infoDirty = false; }
 }
 
 /* ---------- competition jobs ---------- */
 async function refreshCore(L) {
-  const m = L.meta;
-  if (!m.seasons?.length || m.back !== BACK || hoursSince(m.seasonsAt) > 24 * 7) {
-    const ps = B.pickSeasons(B.firstArray(await api(`/leagues/${L.id}/seasons/`), ["results", "seasons"]), BACK);
+  const m = L.meta, back = backFor(L);
+  if (!m.seasons?.length || m.back !== back || hoursSince(m.seasonsAt) > 24 * 7) {
+    const ps = B.pickSeasons(B.firstArray(await api(`/leagues/${L.id}/seasons/`), ["results", "seasons"]), back);
     if (!ps.current) throw new ApiError("no seasons returned", 0);
-    m.seasons = ps.seasons; m.current = ps.current; m.back = BACK; m.seasonsAt = iso();
+    m.seasons = ps.seasons; m.current = ps.current; m.back = back; m.seasonsAt = iso();
   }
   if (!L.teams.size || hoursSince(m.teamsAt) > 24 * 7) {
     let list = await pages("/teams/", { league_id: L.id, season_id: m.current });
@@ -358,7 +373,7 @@ async function teamPacks(idx, comps, packUsed) {
         await put(`squads/${t.id}`, { id: t.id, name: t.name, code, profile: B.flat(profile ?? {}), extra: B.teamExtras(profile), players: B.buildSquad(squad), updated: iso() });
         t.pk = now; n++;
       }
-    } finally { await flush(L); }
+    } finally { await soft(`${code} save`, () => flush(L)); }
   }
   return n;
 }
@@ -442,39 +457,47 @@ try {
     const ids = want === "all" ? null : new Set(want.split(",").map((x) => +x).filter(Boolean));
     const comps = new Map(catalog.leagues.filter((l) => (!ids || ids.has(l.id)) && !skip.has(l.id)).map((l) => [l.code, l]));
     log(`${comps.size} competitions selected of ${catalog.leagues.length} available`);
-    if (WIN) log(`window: ${isoDay(WIN.from)} .. ${isoDay(WIN.to)} (forced refresh)`); else if (FORCE) log("forced refresh");
+    if (WIN) log(`window: ${isoDay(WIN.from)} .. ${isoDay(WIN.to)} (forced refresh)`); else if (FORCE) log("forced refresh of all competitions");
+    if (LEAN) log("lean mode: leaders, transfers and deep history only for TOP competitions");
     for (const t of (await store.get("index/teams"))?.t ?? []) idx.set(t[0], { id: t[0], name: t[1], code: t[2], pk: t[3] });
 
-    const rank = (l) => (TOP.includes(l.id) ? TOP.indexOf(l.id) : 1000 + l.id), ttl = (l) => (TOP.includes(l.id) ? TOP_TTL_H : TTL_H);
+    const rank = (l) => (isTop(l) ? TOP.indexOf(l.id) : 1000 + l.id), ttl = (l) => (isTop(l) ? TOP_TTL_H : TTL_H);
+    // never-synced competitions (no `s.at`) sort first, then the stalest, then TOP order
     const due = [...comps.values()].filter((l) => FORCE || hoursSince(l.s?.at) > ttl(l)).sort((a, b) => (Date.parse(a.s?.at) || 0) - (Date.parse(b.s?.at) || 0) || rank(a) - rank(b));
+    log(`${due.length} competition(s) due this run${FORCE ? "" : `, ${comps.size - due.length} still fresh (use --full to refresh them anyway)`}`);
     const coreStart = used, leaderIds = [], packUsed = new Map();
-    let ms = 0, h2h = 0, goals = 0, info = 0;
-    const refIds = new Set(), venIds = new Set();
+    let ms = 0, h2h = 0, goals = 0, info = 0, done = 0;
+    const refIds = new Set(), venIds = new Set(), empty = [];
     for (const lg of due) {
-      if (used - coreStart >= CORE_BUDGET) { log("core budget used; remaining competitions continue next run"); break; }
+      if (used - coreStart >= CORE_BUDGET) { log(`core budget used; ${due.length - done} competition(s) continue next run`); break; }
       const L = await openComp(lg); opened.push(L);
       try {
         await refreshCore(L);
-        if (BACK > 0) await backfillPast(L);
-        if (hoursSince(L.meta.leadersAt) > LEADERS_TTL_H) { const ld = await refreshLeaders(L); for (const s of ["scorers", "assists"]) for (const r of ld[s]) leaderIds.push(r.id); }
-        if (hoursSince(L.meta.transfersAt) > TRANSFERS_TTL_H) await soft(`${L.code} transfers`, () => refreshTransfers(L));
+        if (backFor(L) > 0) await backfillPast(L);
+        if (deep(L) && hoursSince(L.meta.leadersAt) > LEADERS_TTL_H) { const ld = await refreshLeaders(L); for (const s of ["scorers", "assists"]) for (const r of ld[s]) leaderIds.push(r.id); }
+        if (deep(L) && hoursSince(L.meta.transfersAt) > TRANSFERS_TTL_H) await soft(`${L.code} transfers`, () => refreshTransfers(L));
         if (ms < MS_RUN) ms += await matchStats(L, Math.min(MS_COMP, MS_RUN - ms));
         if (h2h < H2H_RUN) h2h += await autoH2H(L, H2H_RUN - h2h);
         if (goals < GOALS_RUN) goals += await goalsFor(L, Math.min(GOALS_COMP, GOALS_RUN - goals));
         if (info < INFO_RUN) info += await infoFor(L, INFO_RUN - info, refIds);
-        await soft(`${L.code} managers/referees`, () => peopleLists(L));
+        if (deep(L)) await soft(`${L.code} managers/referees`, () => peopleLists(L));
         for (const e of Object.values(L.info ?? {})) if (e?.vn?.id != null) venIds.add(e.vn.id);
         for (const t of L.teams.values()) if (t.active) { const o = idx.get(t.id); if (!o || (o.code !== L.code && comps.get(o.code)?.kind !== "league" && L.kind === "league")) idx.set(t.id, { id: t.id, name: t.name, code: L.code, pk: o?.pk }); }
         const results = Object.values(L.meta.counts?.results ?? {}).reduce((a, b) => a + b, 0);
         const c = catalog.leagues.find((x) => x.id === L.id); if (c) c.s = { at: iso(), teams: [...L.teams.values()].filter((t) => t.active).length, results, fixtures: L.fixtures.size };
         packUsed.set(L.code, L);
+        if (!L.cur.size && !L.fixtures.size) empty.push(`${L.code} ${L.name}`);
         log(`${L.code} ${L.name}: ${L.cur.size} results, ${L.fixtures.size} fixtures, ${L.teams.size} teams`);
       } catch (e) {
         if (e instanceof Stop) throw e;
         warn(`${L.code} ${L.name}`, e);
         const c = catalog.leagues.find((x) => x.id === L.id); if (c) c.s = { ...(c.s ?? {}), at: iso(), err: String(e.message).slice(0, 120) };
-      } finally { await flush(L); }
+      } finally {
+        await soft(`${L.code} save`, () => flush(L));            // a failed save (e.g. Firestore size/index limits) must not abort the other competitions
+        done++;
+      }
     }
+    if (empty.length) log(`no current-season matches returned for ${empty.length} competition(s) (off-season or no coverage): ${empty.join(", ")}`);
     await teamPacks(idx, comps, packUsed);
     await playerPacks([...new Set(leaderIds)]);
     await refereePacks([...refIds]);
@@ -488,6 +511,8 @@ try {
   if (catalog) {
     await put("catalog/main", { ...catalog, updated: iso() });
     await put("index/teams", { updated: iso(), t: [...idx.values()].map((t) => [t.id, t.name, t.code, t.pk ?? 0]) });
+    const synced = catalog.leagues.filter((l) => l.s?.at).length, withData = catalog.leagues.filter((l) => (l.s?.results ?? 0) + (l.s?.fixtures ?? 0) > 0).length;
+    log(`coverage: ${synced}/${catalog.leagues.length} competitions synced, ${withData} with matches stored`);
   }
   log(`API calls this run: ${used}${remaining !== null ? ` | calls left today: ${remaining}` : ""}${DRY ? " | DRY RUN (wrote ./.sync-out)" : ""}`);
 }
