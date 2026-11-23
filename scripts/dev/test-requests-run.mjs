@@ -4,10 +4,11 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import http from "node:http";
 import { spawn } from "node:child_process";
 
-const ROOT = path.resolve(new URL("../..", import.meta.url).pathname), PORT = 18800 + (process.pid % 500);
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."), PORT = 18800 + (process.pid % 500);
 const work = fs.mkdtempSync(path.join(os.tmpdir(), "betiq-req-")), out = (...p) => path.join(work, ".sync-out", ...p);
 const ok = (name) => console.log("ok  " + name);
 

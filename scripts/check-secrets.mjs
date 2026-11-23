@@ -2,6 +2,7 @@
 // It reports the FILE and the RULE only. It never prints the matched text, so its output is safe to paste into a ticket or a CI log.
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import { pathToFileURL } from "node:url";
 
 // error = a real secret; warn = something that is public by design (Firebase web key) but should not sit in tracked source.
 export const RULES = [
@@ -38,7 +39,8 @@ export function scanRepo() {
   return findings;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+// pathToFileURL: `file://${argv[1]}` never matches on Windows (file:///C:/... vs C:\...), which made this script exit silently without scanning.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   let findings;
   try { findings = scanRepo(); } catch (e) { console.error("check:secrets needs a git repository (", e.message.split("\n")[0], ")"); process.exit(2); }
   for (const f of findings) console.log(`${f.sev.toUpperCase().padEnd(5)} ${f.file}  [${f.rule}]`);

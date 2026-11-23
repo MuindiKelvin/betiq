@@ -1,11 +1,13 @@
 // Daily model picks. Pure functions (no Firebase, no DOM): scripts/picks.mjs uses them to write daily/<UTC day>, the Daily Picks page to show and download them.
 // A pick is the model's most probable selection among the three headline markets, kept only above a minimum probability. There are no bookmaker
 // odds here, so these are model picks, not value bets: use the Value finder to compare a pick with a real price.
+// Cups and continental competitions (kind "comp") are included, but their model is rough (strengths come only from that competition's own matches),
+// so every minimum probability is raised by DAILY.roughPlus there.
 import { analyze, selProb } from "./analysis.js";
 import { TOP } from "./board.js";
 import { MARKETS, timeLabel, tzAt } from "./util.js";
 
-export const DAILY = { cap: 5, ahead: 3, min: { "1X2": 0.5, OU25: 0.6, BTTS: 0.6 } };   // cap: picks per competition per UTC day; ahead: UTC days after today
+export const DAILY = { cap: 5, ahead: 3, roughPlus: 0.05, min: { "1X2": 0.5, OU25: 0.6, BTTS: 0.6 } };   // cap: picks per competition per UTC day; ahead: UTC days after today
 export const utcDay = (ms) => new Date(ms).toISOString().slice(0, 10);
 const rnd = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
 
@@ -20,10 +22,11 @@ export function bestPick(p, min = DAILY.min) {
 }
 
 // One competition: fixtures [{ id, h, a, t, s }], teams [{ id, name, ... }], results (every loaded season, as the app loads them).
-// Rows: { c, id, h, a, hn, an, t, m, s, p, x: [expected goals home, away] }. Skipped: cups and continental competitions (model too rough, as in the Value finder),
-// fixtures that are not "not started" or whose kick-off is outside (nowSec, untilSec], and pairs where either team has fewer than 8 matches of data.
+// Rows: { c, id, h, a, hn, an, t, m, s, p, x: [expected goals home, away] }. Skipped: fixtures that are not "not started" or whose kick-off is outside
+// (nowSec, untilSec], and pairs where either team has fewer than 8 matches of data. Cups and continental competitions use the raised minimums.
 export function dayPicks({ code, comp, fixtures, teams, results, nowSec, untilSec }) {
-  if (comp?.kind === "comp" || !results?.length) return [];
+  if (!results?.length) return [];
+  const min = comp?.kind === "comp" ? Object.fromEntries(Object.entries(DAILY.min).map(([m, v]) => [m, v + DAILY.roughPlus])) : DAILY.min;
   const byId = Object.fromEntries((teams ?? []).map((t) => [t.id, t])), out = [];
   for (const f of fixtures ?? []) {
     if (f?.id == null || f.t == null || f.t <= nowSec || f.t > untilSec || (f.s ?? "notstarted") !== "notstarted") continue;
@@ -31,7 +34,7 @@ export function dayPicks({ code, comp, fixtures, teams, results, nowSec, untilSe
     if (!H || !A) continue;
     let o; try { o = analyze({ results, H, A, byId, code, comp }); } catch { continue; }
     if (o.p.thin) continue;
-    const b = bestPick(o.p);
+    const b = bestPick(o.p, min);
     if (b) out.push({ c: code, id: f.id, h: f.h, a: f.a, hn: H.name, an: A.name, t: f.t, m: b.m, s: b.s, p: rnd(b.p, 4), x: [rnd(o.p.lh, 2), rnd(o.p.la, 2)] });
   }
   return out;
@@ -41,11 +44,11 @@ export function dayPicks({ code, comp, fixtures, teams, results, nowSec, untilSe
 // A pick whose match has started is frozen: it stays exactly as it was and is never recomputed, so the list does not change after kick-off.
 // The rest is replaced by the fresh rows, best probability first, up to `cap` picks per competition (frozen ones count).
 export function mergeDay({ prev, fresh, nowSec, cap = DAILY.cap }) {
-  const frozen = (prev ?? []).filter((x) => x.t <= nowSec), ids = new Set(frozen.map((x) => x.id)), per = new Map();
+  const key = (x) => `${x.c}:${x.id}`, frozen = (prev ?? []).filter((x) => x.t <= nowSec), ids = new Set(frozen.map(key)), per = new Map();
   for (const x of frozen) per.set(x.c, (per.get(x.c) ?? 0) + 1);
   const add = [];
   for (const x of [...fresh].sort((a, b) => b.p - a.p || a.t - b.t || a.id - b.id)) {
-    if (ids.has(x.id) || (per.get(x.c) ?? 0) >= cap) continue;
+    if (ids.has(key(x)) || (per.get(x.c) ?? 0) >= cap) continue;
     per.set(x.c, (per.get(x.c) ?? 0) + 1); add.push(x);
   }
   return [...frozen, ...add].sort((a, b) => a.t - b.t || a.id - b.id);

@@ -4,8 +4,10 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = path.resolve(new URL("../..", import.meta.url).pathname), ok = (n) => console.log("ok  " + n);
+// fileURLToPath returns a correct path on every OS (URL.pathname gives "/C:/..." on Windows, which broke the old version).
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."), ok = (n) => console.log("ok  " + n);
 
 /* ---------- a tiny scanner: split call arguments and read the top-level keys of an object literal ---------- */
 function skipString(s, i) { const q = s[i]; for (i++; i < s.length; i++) { if (s[i] === "\\") i++; else if (s[i] === q) return i; } return s.length; }

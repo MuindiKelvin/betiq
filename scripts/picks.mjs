@@ -32,7 +32,7 @@ if (!cat?.leagues?.length) { console.error("No catalog yet: run the data sync fi
 const untilSec = Date.parse(utcDay(nowMs + AHEAD * 864e5) + "T00:00:00Z") / 1000 + 86400;      // end of the last UTC day
 const fresh = []; let comps = 0, skipped = 0;
 for (const l of cat.leagues) {
-  if (!l.s?.at || l.kind === "comp") continue;                                                  // never synced / cups and continental: model too rough
+  if (!l.s?.at) continue;                                                                       // never synced
   const [meta, fx] = await Promise.all([store.get(`meta/${l.code}`), store.get(`fixtures/${l.code}`)]);
   if (!meta || !(fx?.list ?? []).some((f) => f.t > nowSec && f.t <= untilSec)) continue;       // nothing to pick: skip the other reads
   try {

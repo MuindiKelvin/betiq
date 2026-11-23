@@ -114,7 +114,7 @@ t("isVerified needs a confirmed, well-formed email", () => {
 });
 
 /* ---------- scripts/picks.mjs against stored data (DRY_RUN: files, no Firestore) ---------- */
-t("picks.mjs: writes daily/<day>, skips cups, caps per competition, freezes started matches", () => {
+t("picks.mjs: writes daily/<day>, includes cups with raised minimums, caps per competition, freezes started matches", () => {
   let seed = 5; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   const pois = (l) => { const L = Math.exp(-l); let k = 0, p = 1; do { k++; p *= rnd(); } while (p > L); return k - 1; };
   const teams = Array.from({ length: 16 }, (_, i) => ({ id: i + 1, name: "Team " + (i + 1), att: 0.4 + (i / 15) * 1.4, def: 1.5 - (i / 15) * 1.1 }));
@@ -129,20 +129,23 @@ t("picks.mjs: writes daily/<day>, skips cups, caps per competition, freezes star
   const run = (extra = {}) => { const r = spawnSync(process.execPath, [path.join(ROOT, "scripts", "picks.mjs")], { cwd: dir, env: { ...process.env, DRY_RUN: "1", ...extra }, encoding: "utf8" }); assert.equal(r.status, 0, r.stdout + r.stderr); return r.stdout; };
   const read = (d) => JSON.parse(fs.readFileSync(path.join(dir, ".sync-out", "daily", d + ".json"), "utf8"));
   const out = run(), tomorrow = utcDay((nowS + day) * 1000), list = [...Array(4)].flatMap((_, i) => read(utcDay(Date.now() + i * 864e5)).list);
-  assert.match(out, /picks: \d+ picks from 1 competitions in 4 days/);
+  assert.match(out, /picks: \d+ picks from 2 competitions in 4 days/);
   assert.ok(list.length >= 1, "the synthetic league has clear favourites, so some picks must be made");
-  assert.ok(list.every((x) => x.c === "L1"), "cups are skipped"); assert.ok(list.every((x) => x.t > nowS && x.id >= 90000 && x.id < 90100), "no postponed, started or far-future matches");
+  assert.ok(list.every((x) => x.c === "L1" || x.c === "L2"), "only synced competitions (L3 was never synced)");
+  assert.ok(list.some((x) => x.c === "L1") && list.some((x) => x.c === "L2"), "the cup is included");
+  for (const x of list.filter((y) => y.c === "L2")) assert.ok(x.p >= DAILY.min[x.m] + DAILY.roughPlus - 1e-9, "cup picks clear the raised minimum");
+  assert.ok(list.every((x) => x.t > nowS && x.id >= 90000 && x.id < 90100), "no postponed, started or far-future matches");
   for (const x of list) { assert.ok(x.p >= DAILY.min[x.m] && x.p <= 1 && MARKETS[x.m].sel[x.s] && x.hn.startsWith("Team ") && x.x.length === 2); }
-  for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) { const l = read(d).list; assert.ok(l.length <= DAILY.cap, "cap per competition per day"); assert.ok(l.every((x) => utcDay(x.t * 1000) === d), "rows sit in their own UTC day"); }
+  for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) { const l = read(d).list; for (const c of ["L1", "L2"]) assert.ok(l.filter((x) => x.c === c).length <= DAILY.cap, "cap per competition per day"); assert.ok(l.every((x) => utcDay(x.t * 1000) === d), "rows sit in their own UTC day"); }
   assert.equal(read(tomorrow).n, read(tomorrow).list.length);
   // frozen: pretend the first pick's match has started and its stored values changed; a re-run must keep it and not duplicate it
-  const first = list[0], d1 = utcDay(first.t * 1000), doc = read(d1), idx = doc.list.findIndex((x) => x.id === first.id);
+  const first = list[0], d1 = utcDay(first.t * 1000), doc = read(d1), idx = doc.list.findIndex((x) => x.c === first.c && x.id === first.id);
   doc.list[idx] = { ...doc.list[idx], t: nowS - 60, p: 0.999 }; put(`daily/${d1}`, doc);
   run();
-  const after = read(d1).list.filter((x) => x.id === first.id); assert.equal(after.length, 1); assert.equal(after[0].p, 0.999); assert.equal(after[0].t, nowS - 60);
+  const after = read(d1).list.filter((x) => x.c === first.c && x.id === first.id); assert.equal(after.length, 1); assert.equal(after[0].p, 0.999); assert.equal(after[0].t, nowS - 60);
   // old days are removed
   put(`daily/${utcDay(Date.now() - 5 * 864e5)}`, { list: [] }); run(); assert.ok(!fs.existsSync(path.join(dir, ".sync-out", "daily", utcDay(Date.now() - 5 * 864e5) + ".json")));
-  run({ DAILY_PER_COMP: "1" }); for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) assert.ok(read(d).list.filter((x) => x.c === "L1" && x.t > nowS).length <= 1);
+  run({ DAILY_PER_COMP: "1" }); for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) for (const c of ["L1", "L2"]) assert.ok(read(d).list.filter((x) => x.c === c && x.t > nowS).length <= 1);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 console.log(`\nALL DAILY PICKS TESTS PASSED (${n})`);

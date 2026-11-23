@@ -44,7 +44,7 @@ export default function Daily({ user, d }) {
           <Button size="sm" variant="primary" disabled={busy || !todo(flat).length} onClick={() => confirm(todo(flat))}><i className="bi bi-check2-all me-1" />Confirm {comp ? "these" : "all"}{todo(flat).length ? ` (${todo(flat).length})` : ""}</Button>
         </>}
       </div>
-      <p className="small text-body-secondary mb-0">The model's most likely result, goals or both-teams-to-score pick for each upcoming match, chosen automatically after every data sync (up to {DAILY.cap} per competition and day, only above a minimum probability). They carry no bookmaker odds: confirm the ones you like to save them to My Picks, then compare any of them with a real price in the Value finder.</p>
+      <p className="small text-body-secondary mb-0">The model's most likely result, goals or both-teams-to-score pick for each upcoming match, chosen automatically after every data sync (up to {DAILY.cap} per competition and day, only above a minimum probability, raised for cups and continental competitions). They carry no bookmaker odds: confirm the ones you like to save them to My Picks, then compare any of them with a real price in the Value finder.</p>
       <div className="d-flex flex-wrap gap-2 align-items-center">
         {days.map((k) => <Button key={k} size="sm" variant={k === day ? "primary" : "outline-secondary"} onClick={() => setDay(k)}>{dayName(k, today, { month: true })}</Button>)}
         {groups.length > 1 && <Form.Select size="sm" aria-label="Competition" value={comp} onChange={(e) => setComp(e.target.value)} style={{ maxWidth: 260 }} className="ms-md-auto"><option value="">All competitions ({groups.length})</option>{groups.map((g) => <option key={g.code} value={g.code}>{g.name}</option>)}</Form.Select>}
@@ -53,12 +53,12 @@ export default function Daily({ user, d }) {
       {err && <Alert variant="danger" className="mb-0">Could not load the picks: {err}</Alert>}
       {loading && !err && <Spin />}
       {!loading && !err && missing && <Alert variant="secondary" className="mb-0">Daily picks have not been built yet. They appear after the next data sync.</Alert>}
-      {!loading && !err && !missing && !groups.length && <Alert variant="secondary" className="mb-0">No picks for this day: no upcoming match cleared the minimum probability, or the competitions playing have too little data (cups and continental competitions are left out as too rough).</Alert>}
+      {!loading && !err && !missing && !groups.length && <Alert variant="secondary" className="mb-0">No picks for this day: no upcoming match cleared the minimum probability, or the teams playing have too little data.</Alert>}
       {shown.map((g) => (
         <Card key={g.code}>
           <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
             <LeagueLogo lg={d.byCode[g.code] ?? { id: g.id, name: g.name }} size={26} />
-            <div className="me-auto"><div className="fw-semibold">{g.name}</div><div className="tiny text-body-secondary">{g.country || "International"} · {g.picks.length} pick{g.picks.length > 1 ? "s" : ""}</div></div>
+            <div className="me-auto"><div className="fw-semibold">{g.name}</div><div className="tiny text-body-secondary">{g.country || "International"} · {g.picks.length} pick{g.picks.length > 1 ? "s" : ""}{d.byCode[g.code]?.kind === "comp" && <Badge bg="warning" text="dark" className="ms-2" title="Cup or continental competition: strengths come only from this competition's own matches, so the minimum probability is higher and the estimate rougher">Rough model</Badge>}</div></div>
             <Button size="sm" variant="outline-secondary" onClick={() => download(g.picks, g.code)}><i className="bi bi-download me-1" />Download</Button>
             <Button size="sm" variant="outline-primary" disabled={busy || !todo(g.picks).length} onClick={() => confirm(todo(g.picks))}><i className="bi bi-check2 me-1" />Confirm{todo(g.picks).length ? ` (${todo(g.picks).length})` : ""}</Button>
           </Card.Header>

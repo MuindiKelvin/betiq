@@ -5,11 +5,12 @@ import http from "node:http";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawn } from "node:child_process";
 // Fixture times are relative to "now" (the runner keeps change records for 8 days, so fixed dates would make this test expire).
 const BASE = Math.floor(Date.now() / 60e3) * 60e3, at = (min) => new Date(BASE + min * 60e3).toISOString().replace(".000Z", "Z");
 const T = { c1: at(-60), c2: at(-30), u1: at(0), u2: at(5), oldK: at(585), newK: at(705) };   // oldK/newK: kick-off moved from +9h45 to +11h45
-const ROOT = path.resolve(new URL("../..", import.meta.url).pathname);
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
 function mock() {
   const log = [], st = { live: 0, changes: 0, cov: { live_now: 2, next_event_at: null } };
