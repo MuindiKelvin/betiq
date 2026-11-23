@@ -1,7 +1,7 @@
 // BetIQ daemon: ONE long-running process that keeps everything fresh by itself. Start it once (see README: pm2 / systemd / Docker) and leave it.
 //   1. live runner   scripts/live.mjs, always on (LIVE_FOREVER=1: waits out the daily quota instead of exiting). Restarted with back-off if it ever crashes.
 //   2. queued requests  `sync --requests-only` every REQUESTS_EVERY_SECONDS (120). 0 API calls when nothing is queued.
-//   3. full data sync + schedule rebuild every SYNC_EVERY_HOURS (6): `sync`, then `schedule` (no API calls) so the Live page has the new fixtures/results.
+//   3. full data sync + schedule + daily picks every SYNC_EVERY_HOURS (6): `sync`, then `schedule` and `picks` (no API calls) so the Live and Daily Picks pages have the new data.
 // Jobs never overlap. Reads .env from the project folder when it exists, otherwise uses the environment (BSD_API_KEY, FIREBASE_SERVICE_ACCOUNT or serviceAccountKey.json).
 import fs from "node:fs";
 import path from "node:path";
@@ -42,12 +42,14 @@ async function jobsLoop() {
       log("full data sync"); const a = await run("sync.mjs"); log(`sync finished (code ${a})`);
       if (stopping) return;
       log("rebuilding the schedule"); const b = await run("schedule.mjs"); log(`schedule finished (code ${b})`);
+      if (stopping) return;
+      log("building the daily picks"); const p = await run("picks.mjs"); log(`picks finished (code ${p})`);
     } else { const c = await run("sync.mjs", ["--requests-only"]); if (c !== 0) log(`requests job exited with code ${c}`); }
     await sleep(REQ_MS);
   }
 }
 const stop = (sig) => { if (stopping) return; stopping = true; log(`${sig}: stopping`); for (const k of kids) k.kill("SIGTERM"); setTimeout(() => process.exit(0), 3000).unref(); };
 process.on("SIGINT", () => stop("SIGINT")); process.on("SIGTERM", () => stop("SIGTERM"));
-log(`started in ${ROOT}: live runner always on, requests every ${REQ_MS / 1000} s, full sync + schedule every ${SYNC_MS / 36e5} h${NODE_ARGS.length ? ", using .env" : ""}`);
+log(`started in ${ROOT}: live runner always on, requests every ${REQ_MS / 1000} s, full sync + schedule + picks every ${SYNC_MS / 36e5} h${NODE_ARGS.length ? ", using .env" : ""}`);
 await Promise.all([liveLoop(), jobsLoop()]);
 process.exit(0);

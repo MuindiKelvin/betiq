@@ -51,7 +51,8 @@ const wrap = (s, n, max = 2) => {
 
 const C = { dark: "0.04 0.15 0.09", gold: "1 0.82 0.25", ink: "0.1 0.1 0.1", grey: "0.45 0.45 0.45", green: "0.08 0.55 0.28", red: "0.8 0.15 0.2", amber: "0.75 0.5 0", white: "1 1 1" };
 
-export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.now() / 1000 } = {}) {
+// title / badge: optional header texts (daily picks use "DAILY PICKS" and "MODEL PICKS · n"); a pick's `note` replaces its status line.
+export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.now() / 1000, title = "PICK RECEIPT", badge = null } = {}) {
   const W = 300, M = 18, IN = W - 2 * M, ops = [], f2 = (v) => +v.toFixed(2);
   let y = 0;
   const rect = (col, x, top, w, h) => ops.push((H) => `${col} rg ${f2(x)} ${f2(H - top - h)} ${f2(w)} ${f2(h)} re f`);
@@ -66,13 +67,13 @@ export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.no
   rect(C.dark, 0, 0, W, 74);
   y = 38; text("Bet", { size: 24, bold: true, col: C.white }); text("IQ", { x: M + 3 * 0.6 * 24, size: 24, bold: true, col: C.gold });
   y = 56; text("ANALYZE · PREDICT · BET SMART", { size: 6.5, col: "0.7 0.78 0.72" });
-  y = 98; text("PICK RECEIPT", { x: W / 2, size: 13, bold: true, align: "center" });
+  y = 98; text(title, { x: W / 2, size: 13, bold: true, align: "center" });
   y += 13; text("No. " + r.id, { x: W / 2, size: 8.5, col: C.grey, align: "center" });
   y += 12; text(dayLabel(r.t), { x: W / 2, size: 9, align: "center" });
-  y += 12; rect(r.open ? C.amber : C.green, W / 2 - 62, y, 124, 18);
-  y += 12.5; text(r.open ? `ONGOING · ${r.openCount} PENDING` : "FINISHED", { x: W / 2, size: 8, bold: true, col: C.white, align: "center" });
+  y += 12; rect(r.open || badge ? C.amber : C.green, W / 2 - 62, y, 124, 18);
+  y += 12.5; text(badge ?? (r.open ? `ONGOING · ${r.openCount} PENDING` : "FINISHED"), { x: W / 2, size: 8, bold: true, col: C.white, align: "center" });
   y += 17;
-  if (r.open) { text("Picks settle automatically when matches end.", { x: W / 2, size: 6.5, col: C.grey, align: "center" }); y += 8; text("Download again later for the final result.", { x: W / 2, size: 6.5, col: C.grey, align: "center" }); y += 12; }
+  if (r.open && !badge) { text("Picks settle automatically when matches end.", { x: W / 2, size: 6.5, col: C.grey, align: "center" }); y += 8; text("Download again later for the final result.", { x: W / 2, size: 6.5, col: C.grey, align: "center" }); y += 12; }
   if (who) { text("Player", { size: 8, col: C.grey }); text(wrap(who, 36, 1)[0], { x: W - M, size: 8, align: "right" }); y += 11; }
   text("Printed", { size: 8, col: C.grey }); text(dateTimeLabel(now), { x: W - M, size: 8, align: "right" });
   y += 10; rule(true); y += 15;
@@ -84,7 +85,7 @@ export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.no
     wrap(`${MARKETS[pickMarket(p)]?.label ?? ""}: ${pickLabel(p)}${p.prob != null ? ` (${pct(p.prob)})` : ""}`, 55).forEach((ln) => { text(ln, { size: 8 }); y += 10; });
     const odds = p.odds ? `Odds ${p.odds.toFixed(2)}${p.stake ? ` · Stake ${p.stake}` : ""}` : "";
     if (odds) text(odds, { size: 8, col: C.grey });
-    text(statusOf(p), { x: W - M, size: 8, bold: true, align: "right", col: p.won != null ? (p.won ? C.green : C.red) : p.live ? C.red : C.amber });
+    text(p.note ?? statusOf(p), { x: W - M, size: 8, bold: true, align: "right", col: p.won != null ? (p.won ? C.green : C.red) : p.live ? C.red : C.amber });
     y += 16;
   });
 

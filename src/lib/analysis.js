@@ -1,5 +1,5 @@
-import { buildModel, headToHead, keyFactors, predict, teamForm, teamMatches } from "./model";
-import { perGame, summary } from "./util";
+import { buildModel, headToHead, keyFactors, predict, teamForm, teamMatches } from "./model.js";
+import { perGame, summary } from "./util.js";
 
 // Everything the Analyze screen shows for one pairing. results = all loaded matches of the league.
 // Adds meetings found by the all-competition lookup that the league data does not already contain (same pair, within a day).
@@ -45,7 +45,12 @@ export function analyze({ results, H, A, byId, code, comp, extraH2H }) {
 }
 // Probability of one selection in one market, for the odds/value check.
 export const selProb = (p, market, sel) => ({
-  "1X2": { H: p.home, D: p.draw, A: p.away }[sel],
-  OU25: sel === "O" ? p.over25 : 1 - p.over25,
-  BTTS: sel === "Y" ? p.btts : 1 - p.btts,
-})[market];
+  "1X2": { H: p.home, D: p.draw, A: p.away },
+  DC: { HD: p.home + p.draw, DA: p.draw + p.away, HA: p.home + p.away },
+  OU15: { O: p.over15, U: 1 - p.over15 },
+  OU25: { O: p.over25, U: 1 - p.over25 },
+  OU35: { O: p.over35, U: 1 - p.over35 },
+  BTTS: { Y: p.btts, N: 1 - p.btts },
+  CSH: { Y: p.homeCS, N: 1 - p.homeCS },
+  CSA: { Y: p.awayCS, N: 1 - p.awayCS },
+})[market]?.[sel];

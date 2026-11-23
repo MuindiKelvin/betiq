@@ -11,6 +11,7 @@ import MatchStatsView from "./MatchStatsView";
 import DetailsView from "./DetailsView";
 
 const OUT = { H: "Home win", D: "Draw", A: "Away win" };
+const GROUPS = [...new Set(Object.values(MARKETS).map((m) => m.grp))];
 const CONF = { High: "success", Medium: "warning", Low: "secondary" };
 // comparison row shown only when both teams have the number
 const Opt = (p) => (p.a != null && p.b != null ? <CompareRow {...p} /> : null);
@@ -54,17 +55,19 @@ function BetCard({ out, onSave, saved, locked }) {
   const { p } = out, rough = out.comp?.kind === "comp";
   const [market, setMarket] = useState("1X2"), [sel, setSel] = useState(p.outcome), [odds, setOdds] = useState({}), [stake, setStake] = useState(""), [bank, setBank] = useState(readBank), [mine, setMine] = useState("");
   const keys = Object.keys(MARKETS[market].sel), prob = selProb(p, market, sel);
-  const lab = (k) => (market === "1X2" ? (k === "H" ? out.H.name : k === "A" ? out.A.name : "Draw") : MARKETS[market].sel[k]);
-  const o = parseOdds(odds[sel]), mk = removeMargin(Object.fromEntries(keys.map((k) => [k, parseOdds(odds[k])])), keys);
+  const lab = (k) => (market === "1X2" ? (k === "H" ? out.H.name : k === "A" ? out.A.name : "Draw")
+    : market === "DC" ? (k === "HD" ? `${out.H.name} or draw` : k === "DA" ? `Draw or ${out.A.name}` : "Either team wins") : MARKETS[market].sel[k]);
+  const o = parseOdds(odds[sel]), mk = removeMargin(Object.fromEntries(keys.map((k) => [k, parseOdds(odds[k])])), keys, MARKETS[market].total ?? 1);
   const a = o ? assess({ prob, odds: o, mkt: mk, sel, rough }) : null;
   const bankN = parseFloat(bank), amount = a && a.stakeFrac > 0 && bankN > 0 ? Math.round(bankN * a.stakeFrac * 100) / 100 : null;
   const myP = parseFloat(mine) / 100, myProb = myP > 0 && myP < 1 ? myP : null;
-  const change = (m) => { setMarket(m); setSel(m === "1X2" ? p.outcome : Object.keys(MARKETS[m].sel)[0]); setOdds({}); };
+  // a new market starts on the model's most likely selection
+  const change = (m) => { setMarket(m); setSel(m === "1X2" ? p.outcome : Object.keys(MARKETS[m].sel).reduce((b, k) => (selProb(p, m, k) > selProb(p, m, b) ? k : b))); setOdds({}); };
   return (
     <Card className="h-100"><Card.Body>
       <Title icon="bullseye">Value finder</Title>
       <Row className="g-2 mb-2">
-        <Col xs={12} sm={6}><Form.Select aria-label="Market" value={market} onChange={(e) => change(e.target.value)}>{Object.entries(MARKETS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</Form.Select></Col>
+        <Col xs={12} sm={6}><Form.Select aria-label="Market" value={market} onChange={(e) => change(e.target.value)}>{GROUPS.map((g) => <optgroup key={g} label={g}>{Object.entries(MARKETS).filter(([, v]) => v.grp === g).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}</optgroup>)}</Form.Select></Col>
         <Col xs={12} sm={6}><Form.Select aria-label="Your selection" value={sel} onChange={(e) => setSel(e.target.value)}>{keys.map((k) => <option key={k} value={k}>{lab(k)}</option>)}</Form.Select></Col>
       </Row>
       <div className="tiny text-body-secondary mb-1">Bookmaker odds. Fill in every outcome to remove the margin; only your selection is required.</div>

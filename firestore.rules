@@ -1,20 +1,27 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{db}/documents {
+    function numOrNull(v) { return v == null || v is number; }
+
     // Synced data: signed-in users can read; nobody can write from the browser (only the sync script, via the admin key).
     // NOTE: large map/array fields in these documents are exempted from indexing in firestore.indexes.json (not here),
     // so big competitions such as L79 Club Friendlies stay under Firestore's 40,000 index-entries-per-document limit.
     match /{coll}/{id} {
       allow read: if request.auth != null
-        && coll in ['catalog', 'index', 'meta', 'teams', 'seasons', 'fixtures', 'standings', 'leaders', 'transfers', 'squads', 'players', 'details', 'mstats', 'h2h', 'live', 'schedule', 'goals', 'info', 'managers', 'referees', 'coaches', 'officials', 'venues'];
+        && coll in ['catalog', 'index', 'meta', 'teams', 'seasons', 'fixtures', 'standings', 'leaders', 'transfers', 'squads', 'players', 'details', 'mstats', 'h2h', 'live', 'schedule', 'daily', 'goals', 'info', 'managers', 'referees', 'coaches', 'officials', 'venues'];
       allow write: if false;
     }
+    // Anything not listed above or below is denied, including `system/*` (the sync's own bookkeeping, e.g. per-user request counts): admin SDK only.
+
     // Requests queued from the app (match details, all-competition head-to-head, player profiles, manager / referee / venue profiles). The sync script fulfils and deletes them.
+    // `uid` must be the caller's own id: the sync uses it to give every user a fair share and a daily limit (scripts/lib/requests.mjs), so one account cannot use up the API quota.
+    // Reads stay open to signed-in users because the app reads a request to show "queued"; a request holds only ids and the time.
     match /requests/{id} {
       allow read: if request.auth != null;
       allow create: if request.auth != null
         && id.matches('^(d|h2h|p|m|r|v)_[0-9_]+$')
-        && request.resource.data.keys().hasOnly(['kind', 'league', 'eid', 'h', 'a', 'pid', 'oid', 'at'])
+        && request.resource.data.keys().hasOnly(['kind', 'league', 'eid', 'h', 'a', 'pid', 'oid', 'at', 'uid'])
+        && request.resource.data.uid == request.auth.uid
         && request.resource.data.kind in ['details', 'h2h', 'player', 'manager', 'referee', 'venue']
         && request.resource.data.league is string
         && (!('eid' in request.resource.data) || request.resource.data.eid is int)
@@ -25,8 +32,24 @@ service cloud.firestore {
         && request.resource.data.at == request.time;
       allow update, delete: if false;
     }
+    // A user's own picks. The app only ever creates (shape below), reads and deletes them; it never updates one, so updates are denied.
     match /users/{uid}/picks/{id} {
-      allow read, write: if request.auth != null && request.auth.uid == uid;
+      allow read, delete: if request.auth != null && request.auth.uid == uid;
+      allow create: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['v', 'matchId', 'kickoff', 'league', 'homeId', 'awayId', 'home', 'away', 'market', 'selection', 'prob', 'odds', 'stake', 'myProb', 'mktProb', 'createdAt'])
+        && request.resource.data.keys().hasAll(['v', 'league', 'home', 'away', 'market', 'selection', 'prob', 'createdAt'])
+        && request.resource.data.v == 3
+        && request.resource.data.league is string && request.resource.data.league.size() <= 40
+        && request.resource.data.home is string && request.resource.data.home.size() <= 120
+        && request.resource.data.away is string && request.resource.data.away.size() <= 120
+        && request.resource.data.market is string && request.resource.data.market.size() <= 20
+        && request.resource.data.selection is string && request.resource.data.selection.size() <= 20
+        && request.resource.data.prob is number
+        && numOrNull(request.resource.data.get('matchId', null)) && numOrNull(request.resource.data.get('kickoff', null))
+        && numOrNull(request.resource.data.get('homeId', null)) && numOrNull(request.resource.data.get('awayId', null))
+        && numOrNull(request.resource.data.get('odds', null)) && numOrNull(request.resource.data.get('stake', null))
+        && numOrNull(request.resource.data.get('myProb', null)) && numOrNull(request.resource.data.get('mktProb', null))
+        && request.resource.data.createdAt == request.time;
     }
   }
 }

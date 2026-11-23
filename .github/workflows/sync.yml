@@ -5,6 +5,8 @@ on:
     - cron: "*/30 * * * *"     # users' queued requests (match details, player profiles): 0 calls when nothing is queued
   workflow_dispatch:
 concurrency: sync-data
+permissions:
+  contents: read
 jobs:
   sync:
     runs-on: ubuntu-latest
@@ -13,10 +15,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - run: npm install
+      - run: npm ci
       - name: Sync
         run: |
-          if [ "${{ github.event.schedule }}" = "*/30 * * * *" ]; then npm run sync -- --requests-only; else npm run sync && npm run schedule; fi
+          if [ "${{ github.event.schedule }}" = "*/30 * * * *" ]; then npm run sync -- --requests-only; else npm run sync && npm run schedule && npm run picks; fi
         env:
           BSD_API_KEY: ${{ secrets.BSD_API_KEY }}
           FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}

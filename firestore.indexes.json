@@ -1,1 +1,100 @@
-{"indexes":[],"fieldOverrides":[]}
+{
+  "indexes": [],
+  "fieldOverrides": [
+    {
+      "collectionGroup": "teams",
+      "fieldPath": "list",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "fixtures",
+      "fieldPath": "list",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "seasons",
+      "fieldPath": "results",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "goals",
+      "fieldPath": "m",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "mstats",
+      "fieldPath": "m",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "info",
+      "fieldPath": "m",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "transfers",
+      "fieldPath": "list",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "transfers",
+      "fieldPath": "ledger",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "squads",
+      "fieldPath": "players",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "index",
+      "fieldPath": "t",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "catalog",
+      "fieldPath": "leagues",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "schedule",
+      "fieldPath": "list",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "daily",
+      "fieldPath": "list",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live",
+      "fieldPath": "events",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live",
+      "fieldPath": "bad",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live",
+      "fieldPath": "partial",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live",
+      "fieldPath": "changes",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live",
+      "fieldPath": "left",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "live",
+      "fieldPath": "m",
+      "indexes": []
+    }
+  ]
+}

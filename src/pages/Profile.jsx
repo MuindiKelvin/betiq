@@ -1,5 +1,7 @@
 import { Button, Card, Col, ListGroup, Row } from "react-bootstrap";
 import { dateTimeLabel } from "../lib/util";
+import { isVerified } from "../lib/verified";
+import { VerifiedBadge } from "../components/ui";
 
 export default function Profile({ user, d, onSignOut }) {
   return (
@@ -7,7 +9,7 @@ export default function Profile({ user, d, onSignOut }) {
       <h1 className="h3 mb-0">Profile</h1>
       <Card className="pitch"><Card.Body className="d-flex align-items-center gap-3 flex-wrap">
         {user.photoURL ? <img src={user.photoURL} alt="" width="72" height="72" className="rounded-circle" referrerPolicy="no-referrer" /> : <span className="avatar-fallback" style={{ width: 72, height: 72, fontSize: 28 }}>{(user.displayName ?? "?")[0]}</span>}
-        <div className="me-auto min-w-0"><div className="h4 mb-0 text-break">{user.displayName ?? "Account"}</div><div className="text-body-secondary text-break">{user.email}</div></div>
+        <div className="me-auto min-w-0"><div className="h4 mb-0 text-break">{user.displayName ?? "Account"}{isVerified(user) && <VerifiedBadge className="ms-2" size="0.8em" />}</div><div className="text-body-secondary text-break">{user.email}</div>{isVerified(user) && <span className="verified-chip mt-1"><i className="bi bi-patch-check-fill" />Verified email</span>}</div>
         <Button variant="outline-secondary" onClick={onSignOut}><i className="bi bi-box-arrow-left me-2" />Sign out</Button>
       </Card.Body></Card>
       <Card><Card.Header>Data loaded in your app</Card.Header>

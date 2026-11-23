@@ -6,6 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+// Fixture times are relative to "now" (the runner keeps change records for 8 days, so fixed dates would make this test expire).
+const BASE = Math.floor(Date.now() / 60e3) * 60e3, at = (min) => new Date(BASE + min * 60e3).toISOString().replace(".000Z", "Z");
+const T = { c1: at(-60), c2: at(-30), u1: at(0), u2: at(5), oldK: at(585), newK: at(705) };   // oldK/newK: kick-off moved from +9h45 to +11h45
 const ROOT = path.resolve(new URL("../..", import.meta.url).pathname);
 
 function mock() {
@@ -29,10 +32,10 @@ function mock() {
     if (u.pathname === "/api/v2/events/52/") return send(200, { id: 52, status: "inprogress", home_score: 1, away_score: 1 });
     if (u.pathname === "/api/v2/fixtures/changes/") {
       const n = ++st.changes;
-      return send(200, n === 1 ? { since: "s0", until: "2026-11-14T09:00:00Z", count: 2, truncated: false, changes: [
-        { change: "kickoff", changed_at: "2026-11-14T08:00:00Z", event_id: 9, new_value: "2026-11-14T20:45:00+00:00", old_value: "2026-11-14T18:45:00+00:00" },
-        { change: "status", changed_at: "2026-11-14T08:30:00Z", event_id: 8, new_value: "postponed", old_value: "notstarted" }] }
-        : { since: u.searchParams.get("since"), until: "2026-11-14T09:05:00Z", count: 0, truncated: false, changes: [] });
+      return send(200, n === 1 ? { since: "s0", until: `${T.u1}`, count: 2, truncated: false, changes: [
+        { change: "kickoff", changed_at: `${T.c1}`, event_id: 9, new_value: `${T.newK.replace("Z","+00:00")}`, old_value: `${T.oldK.replace("Z","+00:00")}` },
+        { change: "status", changed_at: `${T.c2}`, event_id: 8, new_value: "postponed", old_value: "notstarted" }] }
+        : { since: u.searchParams.get("since"), until: `${T.u2}`, count: 0, truncated: false, changes: [] });
     }
     return send(404, { detail: "not found" });
   });
@@ -57,10 +60,10 @@ try {
   assert.match(a.out, /1 live record\(s\) had no readable id/, "the record without an id is reported loudly, not hidden"); assert.equal(d.bad, 0, "and the count describes the latest poll");
   assert.deepEqual([d.left[1].s, d.left[1].hg, d.left[1].ag, d.left[1].hn, d.left[1].pending], ["finished", 2, 1, "Colombia", false], "dropped match was looked up, not assumed finished");
   assert.deepEqual([d.mode, d.pollS, d.halt], ["live", 1, null]); assert.ok(Date.now() - Date.parse(d.updated) < 15e3);
-  assert.equal(d.changes[9].kickoff.t, Math.floor(Date.parse("2026-11-14T20:45:00Z") / 1000)); assert.equal(d.changes[8].status.s, "postponed");
-  assert.equal(d.changesUntil, "2026-11-14T09:05:00Z", "cursor advanced to `until`");
+  assert.equal(d.changes[9].kickoff.t, Math.floor(Date.parse(`${T.newK}`) / 1000)); assert.equal(d.changes[8].status.s, "postponed");
+  assert.equal(d.changesUntil, `${T.u2}`, "cursor advanced to `until`");
   const ch = log.filter((x) => x.p.endsWith("/fixtures/changes/"));
-  assert.equal(ch[0].q.since, undefined); assert.equal(ch[1].q.since, "2026-11-14T09:00:00Z", "second request starts exactly where the first ended"); assert.equal(ch[0].q.change, "kickoff,status");
+  assert.equal(ch[0].q.since, undefined); assert.equal(ch[1].q.since, `${T.u1}`, "second request starts exactly where the first ended"); assert.equal(ch[0].q.change, "kickoff,status");
   for (const x of log.filter((x) => x.p.endsWith("/events/live/"))) assert.deepEqual(x.q, {}, "no query parameters on /events/live/ (unknown ones are rejected)");
   for (const x of log.filter((x) => x.p.endsWith("/coverage/"))) assert.equal(x.auth, null, "coverage is called without the token");
   assert.equal(log.filter((x) => x.p.endsWith("/events/1/")).length, 1, "one lookup for the one dropped match");

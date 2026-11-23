@@ -7,11 +7,12 @@ export const validOdds = (x) => typeof x === "number" && Number.isFinite(x) && x
 export const parseOdds = (s) => { const n = parseFloat(s); return validOdds(n) ? n : null; };
 
 // Removes the bookmaker margin (proportional method). odds: { selection: decimal odds }, keys: EVERY selection of the market.
+// total: what the fair probabilities add up to (1, or 2 for double chance, where each selection covers two of the three results).
 // Returns null unless all of them have valid odds, else { margin, probs: { selection: fair probability } }.
-export function removeMargin(odds, keys) {
+export function removeMargin(odds, keys, total = 1) {
   if (keys.some((k) => !validOdds(odds[k]))) return null;
   const sum = keys.reduce((s, k) => s + 1 / odds[k], 0);
-  return { margin: sum - 1, probs: Object.fromEntries(keys.map((k) => [k, 1 / odds[k] / sum])) };
+  return { margin: sum / total - 1, probs: Object.fromEntries(keys.map((k) => [k, (total / odds[k]) / sum])) };
 }
 
 // Full-Kelly fraction of bankroll for win probability p at decimal odds o (0 when there is no edge).

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDoc, collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { Alert, Badge, Button, Card, Nav, Table } from "react-bootstrap";
-import { db } from "../lib/firebase";
+import { auth, db } from "../lib/firebase";
 import { fresh, loadGoals, loadInfo, loadManagers, loadMatchStats, loadReferees, useComp, useLeague } from "../lib/data";
 import { byIdMap, cardsOf } from "../lib/people";
 import { analyze } from "../lib/analysis";
@@ -135,12 +135,12 @@ function Inner({ lg, m, byId, code, comp, entry, user, nav }) {
 
   async function request() {
     setX((s) => ({ ...s, busy: true }));
-    try { await setDoc(doc(db, "requests", "d_" + r.id), { kind: "details", league: code, eid: r.id, at: serverTimestamp() }); setX({ queued: true }); }
+    try { await setDoc(doc(db, "requests", "d_" + r.id), { kind: "details", league: code, eid: r.id, at: serverTimestamp(), uid: auth.currentUser?.uid }); setX({ queued: true }); }
     catch (e) { setX({ err: "Could not queue the request: " + e.message }); }
   }
   async function requestH2H() {
     setH2hQ((s) => ({ ...s, busy: true }));
-    try { await setDoc(doc(db, "requests", "h2h_" + pairKey(m.h, m.a)), { kind: "h2h", league: code, eid: r.id, h: m.h, a: m.a, at: serverTimestamp() }); setH2hQ({ queued: true, busy: false }); }
+    try { await setDoc(doc(db, "requests", "h2h_" + pairKey(m.h, m.a)), { kind: "h2h", league: code, eid: r.id, h: m.h, a: m.a, at: serverTimestamp(), uid: auth.currentUser?.uid }); setH2hQ({ queued: true, busy: false }); }
     catch (e) { setH2hQ((s) => ({ ...s, busy: false })); setMsg("Could not queue the request: " + e.message); }
   }
   async function save(pick) {

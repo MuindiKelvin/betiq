@@ -33,6 +33,9 @@ export const FormChips = ({ r = [], size = 26 }) => (
   </div>
 );
 
+// Verified-account mark in the app's gold; shown next to the name of a user whose email is verified (lib/verified.js)
+export const VerifiedBadge = ({ size = "1em", className = "" }) => <i className={`bi bi-patch-check-fill verified-mark ${className}`} style={{ fontSize: size }} role="img" aria-label="Verified email" title="Verified email" />;
+
 export const Stat = ({ value, label, sub }) => (
   <div className="text-center"><div className="num fs-2">{value}</div><div className="small text-body-secondary">{label}</div>{sub && <div className="tiny text-body-secondary">{sub}</div>}</div>
 );

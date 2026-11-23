@@ -76,7 +76,7 @@ Then deploy the rules once (they now allow reading `live`): `npx firebase-tools 
 - **What it spends:** `/coverage/` needs no token, so nothing is spent while nothing is live or due. While matches are live: one `/events/live/` call per tick (default 30 s, `LIVE_POLL_SECONDS`), one `/fixtures/changes/` call every 5 minutes, and one `/events/{id}/` call for each match that leaves the live feed. It stops when `LIVE_RESERVE` (1000) calls remain today so the data sync keeps working.
 - **No guessing:** a match is *Live* only if the live feed lists it. Matches that disappear are looked up (`/events/{id}/`) and their status is stored as the API reports it. Minutes are shown as reported, not counted locally. If the feed is delayed, stopped or out of quota, the app says so. Extra time and penalties are shown separately from the 90-minute score, as the API reports them.
 - **Time zones:** the started/not-started decision compares absolute instants; your time zone only changes how times are displayed.
-- **GitHub Actions:** `.github/workflows/live.yml` runs it every 20 minutes (free on public repositories; on private ones prefer `npm run live:local` on an always-on machine). The WebSocket (individual actions, ball position) is a paid BSD add-on and is not used.
+- **GitHub Actions:** `.github/workflows/live.yml` has a 15-minute safety-net cron that restarts the runner chain if it is ever broken (free on public repositories; on private ones prefer `npm run live:local` on an always-on machine). The WebSocket (individual actions, ball position) is a paid BSD add-on and is not used.
 
 ## Live page, FT labels and instant pick results (v0.5)
 
@@ -84,6 +84,15 @@ Then deploy the rules once (they now allow reading `live`): `npx firebase-tools 
 - **FT** is shown for every finished match (lists, Live page, match page, My Picks). Scores are 90-minute scores; extra time and penalties are listed under them.
 - **My Picks settle as soon as the API reports the match finished.** The runner looks up every match that leaves the live feed and keeps the confirmed result for 4 days in `live/finals`. My Picks listens to the live feed, so a pick turns Won/Lost on screen without a reload, and shows the minute and score while the match is in play. A result from the data sync, once present, always wins. A "sweep" (every ~2 min, max `SWEEP_MAX_PER_DAY`=400 lookups/day) also looks up matches in the stored schedule that kicked off 110 min to 12 h ago and were never reported finished (feed gap, runner restarted).
 - Honest limits: the app can only be as fast as the API's own feed. A result is shown after the API marks the match finished (typically within a minute of the runner seeing it leave the feed). If the API gives no score, nothing is guessed: the pick stays "Awaiting result".
+
+## Daily Picks, more value-finder markets, verified badge
+
+- **Daily Picks tab.** `scripts/picks.mjs` (after every sync, in the daemon and in `sync.yml`; 0 API calls) runs the app's own model (`src/lib/analysis.js`) on the upcoming fixtures of every synced league and writes `daily/<UTC day>` for today and the next 3 days. Per match it takes the most probable selection of three headline markets (result >= 50%, over/under 2.5 >= 60%, both teams score >= 60%), skips pairs with little data and cups / continental competitions (too rough), and keeps the best 5 per competition and day (`DAILY_PER_COMP`, `DAILY_AHEAD_DAYS`). Thresholds: `DAILY` in `src/lib/daily.js`.
+- **Stable through the day.** A pick whose match has started is frozen (never recomputed); only later matches are refreshed on each run.
+- **Confirm and download.** *Confirm* saves the pick to My Picks (`users/<uid>/picks/a_<match>_<market>`, same document shape as a normal pick, no odds, shown with a *Daily pick* tag); the fixed id makes a double confirm impossible (rules deny updates). Confirming closes at kick-off. *Download* gives a PDF per competition or for the whole day.
+- **Value finder markets:** match result, double chance, total goals 1.5 / 2.5 / 3.5, both teams score, home and away clean sheet. Double chance removes the margin against a total of 2 (each selection covers two results). All are settled from the 90-minute score. Corners and cards are not modelled, so they are not offered.
+- **Verified badge:** a gold tick (sidebar and Profile) when `emailVerified` is true and the address is well formed (`src/lib/verified.js`). Google sign-in accounts always are.
+- **Deploy:** `npx firebase-tools deploy --only firestore,hosting` (the rules now allow reading `daily`, the indexes exempt `daily.list`), then `npm run picks:local` once so the first day exists. `npm test` covers all of it, including a run of `picks.mjs` on stored data.
 
 ## Deploy and run on its own
 
@@ -95,6 +104,7 @@ npm run build
 npx firebase-tools deploy --only firestore,hosting --project YOUR_PROJECT_ID   # rules (now incl. schedule) + the website
 npm run sync:local          # first data load (repeat on later days until all competitions are loaded; see "What the sync does")
 npm run schedule:local      # builds the day-by-day schedule for the Live page (0 API calls)
+npm run picks:local         # builds the Daily Picks (0 API calls; needs a finished data sync)
 ```
 The website is static (Firebase Hosting) and is always up. The three jobs that keep the data fresh run inside **one process**, `npm start` (`scripts/daemon.mjs`): the live runner (always on, restarted if it crashes, sleeps until 00:00 UTC when the daily quota is used up), queued requests every 2 min (0 API calls when idle) and a full sync + schedule rebuild every 6 h. Run it on any always-on machine (a VPS, a Raspberry Pi, a PC that stays on). It needs `.env` and `serviceAccountKey.json` in the project folder (never commit them).
 ```bash
@@ -117,3 +127,16 @@ Options (put in `.env`): `SYNC_EVERY_HOURS` (6), `REQUESTS_EVERY_SECONDS` (120),
 - **Managers and referees** per competition (`/managers/?league_id=`, `/referees/?league_id=`, about 2 calls per competition per day) in the *Managers* and *Referees* tabs. These list rows already hold the full profile and averages (record, win %, goals, cards and fouls per match), so those pages open instantly with no request. Only a manager's career (record per spell, home/away, **appointment effect**) and a venue's competitions are fetched on first open (queued like player profiles: 2 calls each). `REFEREES_PER_RUN` (default 0) can preload referee profiles, which the list rows make redundant.
 - **Honest limits.** The manager *matches* log and *social* endpoints are not used. In-play scorer names are not fetched: they appear after full time. The `/events/{id}/incidents/` shape is not used.
 - Deploy the new rules (`npx firebase-tools deploy --only firestore`), then `npm run sync:local` as usual.
+
+
+## Security, request limits and checks (v0.7)
+
+**Credentials.** `.env` and `serviceAccountKey.json` are git-ignored and must never be committed or shared (zip archives included). If either has been shared, rotate it: create a new service-account key in the Firebase console and regenerate the BSD key. The Firebase *web* config in the built app is public by design; restrict that API key to your domain in the Google Cloud console. `npm run check:secrets` fails if a credential is tracked by git or sits in a file git would add; it prints file and rule names only, never values. CI runs it on every push.
+
+**Queued-request limits.** Signed-in users can queue match details, head-to-head and profile requests, and each costs API calls from the shared daily quota. `scripts/lib/requests.mjs` serves them fairly (one per user per round, oldest first) and enforces daily limits (UTC day). Over a user's limit: dropped. Over the global limit: kept for the next day. Older than 48 h: dropped. Usage is kept in `system/requestUsage` (admin-only). Settings: `REQUESTS_PER_RUN` (60), `REQUESTS_PER_USER_DAY` (100), `REQUESTS_TOTAL_DAY` (1000).
+
+**Firestore rules and indexes.** Requests must carry the caller's own `uid`; picks are validated on create (fixed keys and types) and cannot be updated; `system/*` is admin-only. `firestore.indexes.json` now disables indexing of the large array and map fields the app never queries (avoids the per-document index-entry limit and makes live writes cheaper). **Deploy the rules and the hosting build together**: an old cached app does not send `uid` and its requests would be refused. Then run `firebase deploy --only firestore:rules,firestore:indexes,hosting`.
+
+**Checks.** `npm run verify` runs the secret scan, all unit tests, the end-to-end runs against the mock API (`test:e2e`) and the build. The rules contract test checks that every client write in `src/` matches `firestore.rules`; it is not a rules-emulator test, so after changing rules also try them in the Firebase emulator or the Rules Playground.
+
+**Known dependency advisories.** `npm audit` reports advisories in Node-only packages (`undici`, `@grpc/grpc-js`, inside `firebase-admin` and the Node entry of `firebase`) and in the Vite dev server. None is in the shipped browser bundle. `npm audit fix --force` proposes a Firebase downgrade; do not apply it. Plan a deliberate major upgrade (`firebase`, `firebase-admin`, `vite`) and smoke-test it against your project.

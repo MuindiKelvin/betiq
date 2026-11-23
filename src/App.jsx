@@ -16,6 +16,7 @@ import Picks from "./pages/Picks";
 import Model from "./pages/Model";
 import Calibration from "./pages/Calibration";
 import Live from "./pages/Live";
+import Daily from "./pages/Daily";
 import { LiveProvider } from "./lib/useLive";
 import MatchView from "./pages/MatchView";
 import Profile from "./pages/Profile";
@@ -90,6 +91,7 @@ export default function App() {
     analyze: <Analyze key={pre ? `${pre.h}-${pre.a}-${pre.league}` : "new"} user={user} d={{ ...d, compCode: comp }} pre={pre} />,
     model: <Model d={d} />,
     live: <Live d={d} nav={nav} />,
+    daily: <Daily user={user} d={d} />,
     calibration: <Calibration user={user} />,
     profile: <Profile user={user} d={d} onSignOut={out} />,
     help: <Help />,

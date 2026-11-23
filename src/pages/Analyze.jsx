@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDoc, collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { Alert, Button, Card, Col, Row } from "react-bootstrap";
-import { db } from "../lib/firebase";
+import { auth, db } from "../lib/firebase";
 import { fresh, loadResults, useComp } from "../lib/data";
 import { analyze } from "../lib/analysis";
 import { dayLabel, upcoming } from "../lib/util";
@@ -74,7 +74,7 @@ export default function Analyze({ user, d, pre }) {
     setH2h((x) => ({ ...x, busy: true }));
     try {
       const { H, A, fx } = out;
-      await setDoc(doc(db, "requests", "h2h_" + pairKey(H.id, A.id)), { kind: "h2h", league: code, eid: fx.id, h: H.id, a: A.id, at: serverTimestamp() });
+      await setDoc(doc(db, "requests", "h2h_" + pairKey(H.id, A.id)), { kind: "h2h", league: code, eid: fx.id, h: H.id, a: A.id, at: serverTimestamp(), uid: auth.currentUser?.uid });
       setH2h((x) => ({ ...x, queued: true, busy: false }));
     } catch (e) { setH2h((x) => ({ ...x, busy: false })); setMsg({ type: "danger", text: "Could not queue the request: " + e.message }); }
   }

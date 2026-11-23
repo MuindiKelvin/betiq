@@ -1,10 +1,11 @@
 import { useLiveCount } from "../lib/useLive";
 import { useEffect, useRef, useState } from "react";
 import { Button, Form, Offcanvas } from "react-bootstrap";
-import { Crest, LeagueLogo, hit } from "./ui";
+import { Crest, LeagueLogo, VerifiedBadge, hit } from "./ui";
 import Credit from "./Credit";
+import { isVerified } from "../lib/verified";
 
-export const TABS = [["competitions", "Competitions", "globe2"], ["live", "Live", "broadcast"], ["analyze", "Match Analysis", "bar-chart-line-fill"], ["picks", "My Picks", "star-fill"], ["history", "History", "clock-history"], ["calibration", "Calibration", "bullseye"], ["model", "Model", "clipboard-data"],
+export const TABS = [["competitions", "Competitions", "globe2"], ["live", "Live", "broadcast"], ["daily", "Daily Picks", "calendar2-check"], ["analyze", "Match Analysis", "bar-chart-line-fill"], ["picks", "My Picks", "star-fill"], ["history", "History", "clock-history"], ["calibration", "Calibration", "bullseye"], ["model", "Model", "clipboard-data"],
   ["profile", "Profile", "person-fill"], ["help", "Help", "question-circle-fill"]];
 
 export function SideNav({ tab, onSelect, user, onSignOut }) {
@@ -17,7 +18,7 @@ export function SideNav({ tab, onSelect, user, onSignOut }) {
       </nav>
       <div className="side-user">
         {user.photoURL ? <img src={user.photoURL} alt="" width="40" height="40" className="rounded-circle" referrerPolicy="no-referrer" /> : <span className="avatar-fallback">{(user.displayName ?? "?")[0]}</span>}
-        <div className="text-truncate"><div className="fw-semibold text-truncate">{user.displayName ?? "Account"}</div><div className="tiny text-body-secondary text-truncate">{user.email}</div></div>
+        <div className="text-truncate"><div className="fw-semibold text-truncate">{user.displayName ?? "Account"}{isVerified(user) && <VerifiedBadge className="ms-1" />}</div><div className="tiny text-body-secondary text-truncate">{user.email}</div></div>
       </div>
       <button type="button" className="side-link mx-3 mb-2" onClick={onSignOut}><i className="bi bi-box-arrow-left" />Sign Out</button>
       <Credit className="side-credit" />

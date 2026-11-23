@@ -53,21 +53,37 @@ export function perGame(st) {
 }
 
 /* ---------- picks ---------- */
+// Every market is settled from the 90-minute score. `total`: what the selections' fair probabilities add up to (double chance overlaps, so 2). `grp`: group in the market picker.
+// Keys are saved in picks (firestore.rules allows any string up to 20 characters): never rename one.
 export const MARKETS = {
-  "1X2": { label: "Match result", sel: { H: "Home win", D: "Draw", A: "Away win" } },
-  OU25: { label: "Total goals 2.5", sel: { O: "Over 2.5", U: "Under 2.5" } },
-  BTTS: { label: "Both teams score", sel: { Y: "Yes", N: "No" } },
+  "1X2": { label: "Match result", grp: "Result", sel: { H: "Home win", D: "Draw", A: "Away win" } },
+  DC: { label: "Double chance", grp: "Result", total: 2, sel: { HD: "Home or draw", DA: "Draw or away", HA: "Home or away" } },
+  OU15: { label: "Total goals 1.5", grp: "Goals", sel: { O: "Over 1.5", U: "Under 1.5" } },
+  OU25: { label: "Total goals 2.5", grp: "Goals", sel: { O: "Over 2.5", U: "Under 2.5" } },
+  OU35: { label: "Total goals 3.5", grp: "Goals", sel: { O: "Over 3.5", U: "Under 3.5" } },
+  BTTS: { label: "Both teams score", grp: "Goals", sel: { Y: "Yes", N: "No" } },
+  CSH: { label: "Home clean sheet", grp: "Clean sheet", sel: { Y: "Yes", N: "No" } },
+  CSA: { label: "Away clean sheet", grp: "Clean sheet", sel: { Y: "Yes", N: "No" } },
 };
-export function outcomeOf(market, hg, ag) {
-  if (market === "1X2") return hg > ag ? "H" : hg < ag ? "A" : "D";
-  if (market === "OU25") return hg + ag > 2 ? "O" : "U";
-  return hg > 0 && ag > 0 ? "Y" : "N";
+const line = (hg, ag, n) => (hg + ag > n ? "O" : "U");
+export function isWin(market, sel, hg, ag) {
+  switch (market) {
+    case "1X2": return sel === (hg > ag ? "H" : hg < ag ? "A" : "D");
+    case "DC": return sel === "HD" ? hg >= ag : sel === "DA" ? hg <= ag : sel === "HA" ? hg !== ag : false;
+    case "OU15": return sel === line(hg, ag, 1);
+    case "OU25": return sel === line(hg, ag, 2);
+    case "OU35": return sel === line(hg, ag, 3);
+    case "BTTS": return sel === (hg > 0 && ag > 0 ? "Y" : "N");
+    case "CSH": return sel === (ag === 0 ? "Y" : "N");
+    case "CSA": return sel === (hg === 0 ? "Y" : "N");
+    default: return false;
+  }
 }
 // Old picks (v1 app) only had { predicted: "H"|"D"|"A" }
 export const pickMarket = (p) => p.market ?? "1X2";
 export const pickSel = (p) => p.selection ?? p.predicted;
 export function settle(p, hg, ag) {
-  const won = outcomeOf(pickMarket(p), hg, ag) === pickSel(p);
+  const won = isWin(pickMarket(p), pickSel(p), hg, ag);
   const profit = p.odds && p.stake ? (won ? p.stake * (p.odds - 1) : -p.stake) : null;
   return { won, profit };
 }

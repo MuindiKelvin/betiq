@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
 import { Accordion, Alert, Button, Card, Col, Nav, Row } from "react-bootstrap";
-import { db } from "../lib/firebase";
+import { auth, db } from "../lib/firebase";
 import { fresh } from "../lib/data";
 import { ageOf, first, fmtVal, humanize } from "../lib/util";
 import DataTable from "../components/DataTable";
@@ -24,7 +24,7 @@ export default function Player({ player, d, nav, onBack }) {
   }, [id]);
   async function request() {
     setSt((s) => ({ ...s, busy: true }));
-    try { await setDoc(doc(db, "requests", "p_" + id), { kind: "player", league: code, pid: id, at: serverTimestamp() }); setSt({ queued: true }); }
+    try { await setDoc(doc(db, "requests", "p_" + id), { kind: "player", league: code, pid: id, at: serverTimestamp(), uid: auth.currentUser?.uid }); setSt({ queued: true }); }
     catch (e) { setSt({ err: "Could not queue the request: " + e.message }); }
   }
   const pack = st.pack, prof = { ...(player.row ?? {}), ...(pack?.profile ?? {}) };

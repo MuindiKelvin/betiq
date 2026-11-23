@@ -20,6 +20,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import * as B from "./lib/bsd.mjs";
+import * as R from "./lib/requests.mjs";
 
 const env = process.env, int = (k, d) => (Number.isFinite(+env[k]) && env[k] !== undefined && env[k] !== "" ? +env[k] : d);
 const KEY = env.BSD_API_KEY, BASE = (env.BSD_BASE || "https://sports.bzzoiro.com/api/v2").replace(/\/$/, "");
@@ -40,6 +41,7 @@ const PACK_N = int("TEAMPACK_PER_RUN", 400), PACK_TTL_D = int("TEAMPACK_TTL_DAYS
 const MS_COMP = int("MSTATS_PER_COMP", 15), MS_RUN = int("MSTATS_PER_RUN", 600);
 const H2H_UP = int("H2H_UPCOMING", 3), H2H_RUN = int("H2H_PER_RUN", 250), H2H_TTL_D = int("H2H_TTL_DAYS", 7);
 const PLAYERS_RUN = int("PLAYERS_PER_RUN", 100), REQS_RUN = int("REQUESTS_PER_RUN", 60);
+const REQ_USER_DAY = int("REQUESTS_PER_USER_DAY", R.DEFAULTS.perUserDay), REQ_TOTAL_DAY = int("REQUESTS_TOTAL_DAY", R.DEFAULTS.totalDay);   // per-user / all-users daily limits on queued requests (see scripts/lib/requests.mjs)
 const GOALS_COMP = int("GOALS_PER_COMP", 25), GOALS_RUN = int("GOALS_PER_RUN", 300), GOALS_FIN = int("GOALS_FROM_FINALS_PER_RUN", 60), GOALS_RESERVE = int("GOALS_RESERVE", 1000);
 const INFO_UP = int("INFO_UPCOMING", 3), INFO_DETAIL = int("INFO_DETAIL_CALLS", 0), INFO_RUN = int("INFO_PER_RUN", 250), INFO_TTL_H = int("INFO_TTL_HOURS", 24);      // referee / venue / managers of the next fixtures
 const VEN_RUN = int("VENUES_PER_RUN", 100), VEN_TTL_D = int("VENUE_TTL_DAYS", 30);   // venue names (the match feed only carries venue ids)
@@ -398,9 +400,15 @@ async function fetchPlayer(id) {
 /* ---------- users' requests (queued from the app) ---------- */
 async function fulfillRequests() {
   const reqs = await store.list("requests");
-  let n = 0;
-  for (const r of reqs) {
-    if (n++ >= REQS_RUN) break;
+  if (!reqs.length) return;                                    // idle: no reads of the usage document, no writes, no API calls
+  // Fair order, per-user and global daily limits: one user cannot use up the shared API quota (scripts/lib/requests.mjs).
+  const plan = R.planRequests(reqs, await store.get("system/requestUsage"), { perRun: REQS_RUN, perUserDay: REQ_USER_DAY, totalDay: REQ_TOTAL_DAY });
+  for (const id of plan.drop) await store.del(`requests/${id}`);
+  if (plan.drop.length) log(`requests: dropped ${plan.drop.length} (over the daily limit for that user, or older than 48 h)`);
+  if (plan.defer.length) log(`requests: ${plan.defer.length} wait for the next run`);
+  const byId = new Map(reqs.map((r) => [r.id, r]));
+  try {
+  for (const r of plan.serve.map((id) => byId.get(id))) {
     const d = r.data ?? {};
     try {
       if (d.kind === "details" && Number.isFinite(+d.eid) && d.league) {
@@ -437,6 +445,7 @@ async function fulfillRequests() {
     } catch (e) { if (e instanceof Stop) throw e; warn(`request ${r.id}`, e); }
     await store.del(`requests/${r.id}`);                       // done, or permanently failed: do not retry forever
   }
+  } finally { await put("system/requestUsage", plan.usage); }   // counted even if the run stops early (quota): the count can only be too high, never too low
 }
 
 /* ---------- run ---------- */

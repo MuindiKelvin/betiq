@@ -15,7 +15,7 @@ function PickLine({ p, lg, onRemove }) {
     <ListGroup.Item className="d-flex align-items-center gap-3 py-3 flex-wrap">
       <div className="flex-fill" style={{ minWidth: 180 }}>
         <div className="fw-medium">{p.home} vs {p.away}</div>
-        {lg && <div className="small text-body-secondary"><i className="bi bi-trophy me-1" />{lg.name}{p.v !== 3 && <Badge bg="secondary" className="ms-2">Legacy</Badge>}</div>}
+        {lg && <div className="small text-body-secondary"><i className="bi bi-trophy me-1" />{lg.name}{p.v !== 3 && <Badge bg="secondary" className="ms-2">Legacy</Badge>}{String(p.id).startsWith("a_") && <Badge bg="primary" text="dark" className="ms-2" title="Confirmed from Daily Picks">Daily pick</Badge>}</div>}
       </div>
       <div className="text-end"><div>{pickLabel(p)}</div><div className="small text-body-secondary">{MARKETS[pickMarket(p)]?.label}{p.prob != null && ` · ${pct(p.prob)}`}</div></div>
       {p.odds && <div className="text-end small"><div>@ {p.odds.toFixed(2)}</div>{p.stake && <div className="text-body-secondary">stake {p.stake}</div>}</div>}

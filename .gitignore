@@ -1,7 +1,14 @@
 node_modules
 dist
-.env
-serviceAccountKey.json
+coverage
+.DS_Store
 .sync-out
 .firebase
-.firebase
+
+# credentials: never commit these (scripts/check-secrets.mjs fails CI if one is tracked)
+.env
+.env.*
+!.env.example
+serviceAccountKey*.json
+*-firebase-adminsdk-*.json
+*.pem

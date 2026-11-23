@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { db } from "./firebase";
+import { auth, db } from "./firebase";
 import { fresh } from "./data";
 import { first } from "./util";
 
@@ -19,7 +19,7 @@ export function useEntity(kind, id, league) {
   }, [kind, id]);
   async function request() {
     setSt((s) => ({ ...s, busy: true }));
-    try { await setDoc(doc(db, "requests", `${RID[kind]}_${id}`), { kind, league: league ?? "", oid: id, at: serverTimestamp() }); setSt({ queued: true }); }
+    try { await setDoc(doc(db, "requests", `${RID[kind]}_${id}`), { kind, league: league ?? "", oid: id, at: serverTimestamp(), uid: auth.currentUser?.uid }); setSt({ queued: true }); }
     catch (e) { setSt({ err: "Could not queue the request: " + e.message }); }
   }
   return { st, request };
