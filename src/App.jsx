@@ -7,14 +7,13 @@ import { dayLabel } from "./lib/util";
 import Backdrop from "./components/Backdrop";
 import { Spin } from "./components/ui";
 import Analyze from "./pages/Analyze";
+import Explore from "./pages/Explore";
 import Competitions from "./pages/Competitions";
 import Competition from "./pages/Competition";
 import Team from "./pages/Team";
 import Player from "./pages/Player";
 import { Manager, Referee, Venue } from "./pages/People";
 import Picks from "./pages/Picks";
-import Model from "./pages/Model";
-import Calibration from "./pages/Calibration";
 import Live from "./pages/Live";
 import Daily from "./pages/Daily";
 import { LiveProvider } from "./lib/useLive";
@@ -51,7 +50,7 @@ function Login({ onError, err }) {
 }
 
 export default function App() {
-  const [user, setUser] = useState(undefined), [tab, setTab] = useState("competitions"), [menu, setMenu] = useState(false);
+  const [user, setUser] = useState(undefined), [tab, setTab] = useState("explore"), [mode, setMode] = useState("browse"), [menu, setMenu] = useState(false);   // mode: Explore shows "browse" (competitions) or "analyze" (match analysis)
   const [comp, setComp] = useState(null), [compTab, setCompTab] = useState("overview");          // selected competition + its tab
   const [team, setTeam] = useState(null), [player, setPlayer] = useState(null), [ent, setEnt] = useState(null), [view, setView] = useState(null), [pre, setPre] = useState(null);
   const [err, setErr] = useState(null), [d, setD] = useState(null);
@@ -77,22 +76,23 @@ export default function App() {
   // navigation: detail pages (match > player > team) sit on top of the current page; sidebar clicks clear them
   const clear = () => { setView(null); setPlayer(null); setTeam(null); setEnt(null); setPre(null); window.scrollTo({ top: 0 }); };
   const nav = {
-    comp: (code, t = "overview") => { clear(); setComp(code); setCompTab(t); setTab("competitions"); },
+    comp: (code, t = "overview") => { clear(); setComp(code); setCompTab(t); setMode("browse"); setTab("explore"); },
     team: (id, code) => { setPlayer(null); setView(null); setEnt(null); setTeam({ id, code }); window.scrollTo({ top: 0 }); },
     person: (e) => { setView(null); setPlayer(null); setEnt(e); window.scrollTo({ top: 0 }); },   // { kind: "manager" | "referee" | "venue", id, code, name, row }
     player: (p) => { setEnt(null); setPlayer(p); window.scrollTo({ top: 0 }); },
-    analyze: (p) => { clear(); setPre(p ?? null); setTab("analyze"); },
+    analyze: (p) => { clear(); setPre(p ?? null); setMode("analyze"); setTab("explore"); },
     open: (m) => { window.scrollTo({ top: 0 }); setView(m); },   // every match (played or upcoming) opens the match page
   };
-  const go = (k) => { if (k === "competitions" && tab === "competitions") setComp(null); clear(); setTab(k); };
+  const go = (k) => { if (k === "explore" && tab === "explore") { setComp(null); setMode("browse"); } clear(); setTab(k); };   // the sidebar entry of the current page returns to its start
   const out = () => signOut(auth);
   const page = d && ({
-    competitions: comp ? <Competition key={comp} d={d} code={comp} tab={compTab} setTab={setCompTab} nav={nav} onBack={() => setComp(null)} /> : <Competitions d={d} nav={nav} />,
-    analyze: <Analyze key={pre ? `${pre.h}-${pre.a}-${pre.league}` : "new"} user={user} d={{ ...d, compCode: comp }} pre={pre} />,
-    model: <Model d={d} />,
+    explore: (
+      <Explore mode={mode} showSwitch={mode === "analyze" || !comp} onMode={(m) => { if (m === mode) return; clear(); if (m === "browse") setComp(null); setMode(m); }}>
+        {mode === "analyze" ? <Analyze key={pre ? `${pre.h}-${pre.a}-${pre.league}` : "new"} user={user} d={{ ...d, compCode: comp }} pre={pre} />
+          : comp ? <Competition key={comp} d={d} code={comp} tab={compTab} setTab={setCompTab} nav={nav} onBack={() => setComp(null)} /> : <Competitions d={d} nav={nav} />}
+      </Explore>),
     live: <Live d={d} nav={nav} />,
     daily: <Daily user={user} d={d} />,
-    calibration: <Calibration user={user} />,
     profile: <Profile user={user} d={d} onSignOut={out} />,
     help: <Help />,
   }[tab] ?? <Picks key={tab} user={user} d={d} history={tab === "history"} />);

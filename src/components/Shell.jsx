@@ -5,7 +5,7 @@ import { Crest, LeagueLogo, VerifiedBadge, hit } from "./ui";
 import Credit from "./Credit";
 import { isVerified } from "../lib/verified";
 
-export const TABS = [["competitions", "Competitions", "globe2"], ["live", "Live", "broadcast"], ["daily", "Daily Picks", "calendar2-check"], ["analyze", "Match Analysis", "bar-chart-line-fill"], ["picks", "My Picks", "star-fill"], ["history", "History", "clock-history"], ["calibration", "Calibration", "bullseye"], ["model", "Model", "clipboard-data"],
+export const TABS = [["explore", "Explore", "compass"], ["live", "Live", "broadcast"], ["daily", "Daily Picks", "calendar2-check"], ["picks", "My Picks", "star-fill"], ["history", "History", "clock-history"], 
   ["profile", "Profile", "person-fill"], ["help", "Help", "question-circle-fill"]];
 
 export function SideNav({ tab, onSelect, user, onSignOut }) {
@@ -26,7 +26,7 @@ export function SideNav({ tab, onSelect, user, onSignOut }) {
   );
 }
 
-// Search teams and competitions. Team -> Match Analysis with that team as home; competition -> Matches.
+// Search teams and competitions. Team -> its team page; competition -> its pages (Explore).
 export function GlobalSearch({ d, onTeam, onComp }) {
   const [q, setQ] = useState(""), [open, setOpen] = useState(false), box = useRef(null);
   useEffect(() => {

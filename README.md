@@ -39,13 +39,13 @@ requests-only run every 30 minutes (0 API calls when nothing is queued), so a re
 
 ## Layout
 Competitions (browse) > a competition hub: Overview, Matches, Table, Teams, Players, Transfers. Teams have squads (by position, with injury status),
-statistics, matches and transfers; players have profile, career, transfers and recent matches. Match Analysis predicts upcoming fixtures;
+statistics, matches and transfers; players have profile, career, transfers and recent matches. Explore (competitions and Match Analysis in one tab) predicts upcoming fixtures;
 finished matches open view-only with events, lineups, **average positions** and a **shot map** (sized by xG). Global search finds teams and competitions.
 
 ## The model
 Time-decayed home/away attack and defence strengths (shrunk for small samples) -> Poisson goals -> scoreline grid -> markets, plus two small
 bounded nudges (recent form, head-to-head). Home/away scores are 90-minute scores. Cup and continental predictions are labelled rough.
-The Model tab backtests it. `npm test` runs the model and data-parsing tests.
+The backtest and calibration code stays in `src/lib` and is covered by `npm test`, which runs the model and data-parsing tests.
 
 ## Troubleshooting
 - `HTTP 401` in sync/probe: key missing or wrong. `daily quota exhausted`: normal, resets 00:00 UTC; run again later.

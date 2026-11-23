@@ -84,7 +84,7 @@ export default function Analyze({ user, d, pre }) {
 
   return (
     <div className="d-flex flex-column gap-3">
-      <div><h1 className="h3 mb-1">Match analysis</h1><p className="text-body-secondary mb-0">Choose a competition and two teams. BetIQ reads their form, head-to-head history and statistics, then estimates the result.</p></div>
+      <p className="text-body-secondary mb-0">Choose a competition and two teams. BetIQ reads their form, head-to-head history and statistics, then estimates the result.</p>
       <Card className="picker"><Card.Body className="d-flex flex-column gap-3">
         <Row className="g-2"><Col xs={12} md={6} lg={4}><CompSelect entries={d.entries} value={code} onChange={changeComp} /></Col></Row>
         {s.err ? <Alert variant="warning" className="mb-0">{s.err}</Alert> : !s.data ? <Spin /> : (
