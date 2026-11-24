@@ -177,4 +177,7 @@ for (;;) {
   }
   await sleep(polling ? POLL_S * 1000 : IDLE_SLEEP_MS);
 }
-process.exit(0);
+// End by itself instead of calling process.exit(): forcing the exit while sockets or the stdout pipe are still closing crashes Node on Windows
+// (libuv "UV_HANDLE_CLOSING" assertion, exit code 3221226505) even though the run finished and flushed. A safety net exits after 5 s if something unexpectedly keeps the process alive.
+process.exitCode = 0;
+setTimeout(() => process.exit(0), 5000).unref();

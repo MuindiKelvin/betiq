@@ -24,17 +24,19 @@ export function bestPick(p, min = DAILY.min) {
 // One competition: fixtures [{ id, h, a, t, s }], teams [{ id, name, ... }], results (every loaded season, as the app loads them).
 // Rows: { c, id, h, a, hn, an, t, m, s, p, x: [expected goals home, away] }. Skipped: fixtures that are not "not started" or whose kick-off is outside
 // (nowSec, untilSec], and pairs where either team has fewer than 8 matches of data. Cups and continental competitions use the raised minimums.
-export function dayPicks({ code, comp, fixtures, teams, results, nowSec, untilSec }) {
+// why (optional array): receives { id, hn, an, t, reason } for every in-window fixture that got no pick, so a missing match can be explained (npm run picks:why).
+export function dayPicks({ code, comp, fixtures, teams, results, nowSec, untilSec, why }) {
   if (!results?.length) return [];
   const min = comp?.kind === "comp" ? Object.fromEntries(Object.entries(DAILY.min).map(([m, v]) => [m, v + DAILY.roughPlus])) : DAILY.min;
   const byId = Object.fromEntries((teams ?? []).map((t) => [t.id, t])), out = [];
   for (const f of fixtures ?? []) {
     if (f?.id == null || f.t == null || f.t <= nowSec || f.t > untilSec || (f.s ?? "notstarted") !== "notstarted") continue;
-    const H = byId[f.h], A = byId[f.a];
-    if (!H || !A) continue;
-    let o; try { o = analyze({ results, H, A, byId, code, comp }); } catch { continue; }
-    if (o.p.thin) continue;
+    const H = byId[f.h], A = byId[f.a], skip = (reason) => why?.push({ id: f.id, hn: H?.name ?? `team ${f.h}`, an: A?.name ?? `team ${f.a}`, t: f.t, reason });
+    if (!H || !A) { skip("a team is missing from this competition's team list"); continue; }
+    let o; try { o = analyze({ results, H, A, byId, code, comp }); } catch (e) { skip("model error: " + e.message); continue; }
+    if (o.p.thin) { skip("too little data: one team has fewer than 8 matches in the loaded seasons"); continue; }
     const b = bestPick(o.p, min);
+    if (!b && why) skip("no selection clears its minimum: " + Object.keys(min).map((m) => { const t = bestPick(o.p, { [m]: 0 }); return `${MARKETS[m].sel[t.s]} ${Math.round(t.p * 100)}% < ${Math.round(min[m] * 100)}%`; }).join(", "));
     if (b) out.push({ c: code, id: f.id, h: f.h, a: f.a, hn: H.name, an: A.name, t: f.t, m: b.m, s: b.s, p: rnd(b.p, 4), x: [rnd(o.p.lh, 2), rnd(o.p.la, 2)] });
   }
   return out;

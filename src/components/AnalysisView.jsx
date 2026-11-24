@@ -11,6 +11,8 @@ import MatchStatsView from "./MatchStatsView";
 import DetailsView from "./DetailsView";
 
 const OUT = { H: "Home win", D: "Draw", A: "Away win" };
+// the deep dive is split into tabs so the page stays short; only the open tab is drawn
+const TABS = [["model", "Markets & model", "list-check"], ["form", "Form & head-to-head", "activity"], ["season", "Season statistics", "bar-chart-line"]];
 const GROUPS = [...new Set(Object.values(MARKETS).map((m) => m.grp))];
 const CONF = { High: "success", Medium: "warning", Low: "secondary" };
 // comparison row shown only when both teams have the number
@@ -113,7 +115,7 @@ const sum = (rows) => { const r = { w: 0, d: 0, l: 0, g: 0, btts: 0 }; rows.forE
 export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hInfo, onRequestH2H, details, mstats, detailsSlot, locked }) {
   const { H, A, p, fh, fa, h2h, sH, sA, pgH, pgA } = out;
   const nm = (id) => byId[id]?.name ?? "Team";
-  const [showAllH2H, setAll] = useState(false);
+  const [showAllH2H, setAll] = useState(false), [tab, setTab] = useState("model");
   const rows = showAllH2H ? h2h.rows : h2h.rows.slice(0, 6);
   const lg = out.comp, isComp = lg?.kind === "comp";
   const years = h2h.rows.length ? [new Date(h2h.rows[h2h.rows.length - 1].t * 1000).getUTCFullYear(), new Date(h2h.rows[0].t * 1000).getUTCFullYear()] : null;
@@ -154,7 +156,7 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
         </div>
         <div className="text-center small my-2">Avg goals {(l10.g / n10).toFixed(1)} <span className="text-body-secondary">|</span> BTTS {pct(l10.btts / n10)}</div>
       </>) : <p className="text-body-secondary small">No meetings in the loaded seasons.</p>}
-      <Button variant="outline-primary" size="sm" className="w-100 mt-auto" onClick={() => document.getElementById("h2h-full")?.scrollIntoView({ behavior: "smooth", block: "start" })}>View full head-to-head <i className="bi bi-arrow-right ms-1" /></Button>
+      <Button variant="outline-primary" size="sm" className="w-100 mt-auto" onClick={() => { setTab("form"); setTimeout(() => document.getElementById("h2h-full")?.scrollIntoView({ behavior: "smooth", block: "start" }), 60); }}>View full head-to-head <i className="bi bi-arrow-right ms-1" /></Button>
     </Panel>);
   const formCompact = (
     <Panel icon="activity" title="Current form">
@@ -192,7 +194,11 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
       </>)}
 
       <Col xs={12}><h2 className="h4 mt-3 mb-0 section-title">Deep dive</h2></Col>
+      <Col xs={12}><div className="d-flex flex-wrap gap-2" role="group" aria-label="Deep dive sections">
+        {TABS.map(([k, l, i]) => <Button key={k} size="sm" variant={tab === k ? "primary" : "outline-secondary"} aria-pressed={tab === k} onClick={() => setTab(k)}><i className={`bi bi-${i} me-1`} />{l}</Button>)}
+      </div></Col>
       {/* scoreline map + markets */}
+      {tab === "model" && <>
       <Col xs={12} lg={6}><Card className="h-100"><Card.Body>
         <Title icon="grid-3x3">Scoreline map</Title>
         <Row className="g-2 text-center mb-3">
@@ -213,11 +219,13 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
         <MarketRow label="Both teams score" v={p.btts} /><MarketRow label={`${H.name} clean sheet`} v={p.homeCS} /><MarketRow label={`${A.name} clean sheet`} v={p.awayCS} />
       </Card.Body></Card></Col>
 
-      {/* why + full form */}
+      {/* why the model says this */}
       <Col xs={12} lg={6}><Card className="h-100"><Card.Body>
         <Title icon="lightbulb">Why the model says this</Title>
         <ul className="why mb-0">{out.factors.map((f, i) => <li key={i}>{f}</li>)}</ul>
       </Card.Body></Card></Col>
+      </>}
+      {tab === "form" && <>
       <Col xs={12} lg={6}><Card className="h-100"><Card.Body>
         <Title icon="activity">{ended ? "Form before the match (last 5)" : "Form details (last 5, newest first)"}</Title>
         {[[H, fh], [A, fa]].map(([t, f]) => (
@@ -252,9 +260,10 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
         </>) : <p className="text-body-secondary mb-0">These teams have not met in the seasons loaded (the sync loads the last 5 seasons of this competition).</p>}
       </Card.Body></Card></Col>
       {details?.lineups && <Col xs={12} lg={6}><DetailsView details={details} h={H.name} a={A.name} finished={!!ended} timeline={false} /></Col>}
+      </>}
 
       {/* season statistics */}
-      <Col xs={12}><Card><Card.Body>
+      {tab === "season" && <Col xs={12}><Card><Card.Body>
         <Title icon="bar-chart-line" right={<span className="small"><strong>{H.name}</strong> vs <strong>{A.name}</strong></span>}>Season statistics</Title>
         <Row className="g-4">
           <Col xs={12} lg={6}>
@@ -288,7 +297,7 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
             </>) : <div className="small text-body-secondary">Team statistics for {H.name} and {A.name} have not been loaded yet. The data sync refreshes them for a few hundred teams per run.</div>}
           </Col>
         </Row>
-      </Card.Body></Card></Col>
+      </Card.Body></Card></Col>}
 
       <Col xs={12}><p className="small text-body-secondary mb-0"><i className="bi bi-exclamation-triangle me-2" />Statistical estimates, not guarantees. Betting carries risk: never stake money you cannot afford to lose. If gambling stops being fun, seek help.</p></Col>
     </Row>

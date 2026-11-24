@@ -9,7 +9,7 @@ import { markets, predict, buildModel } from "../../src/lib/model.js";
 import { selProb } from "../../src/lib/analysis.js";
 import { MARKETS, isWin, settle } from "../../src/lib/util.js";
 import { removeMargin } from "../../src/lib/value.js";
-import { DAILY, bestPick, dailyReceipt, groupByComp, mergeDay, pickId, utcDay } from "../../src/lib/daily.js";
+import { DAILY, bestPick, dailyReceipt, dayPicks, groupByComp, mergeDay, pickId, utcDay } from "../../src/lib/daily.js";
 import { receiptPdf } from "../../src/lib/receipts.js";
 import { isVerified } from "../../src/lib/verified.js";
 import { EDITABLE, canEditPick, editPatch } from "../../src/lib/pickstate.js";
@@ -175,6 +175,23 @@ t("picks.mjs: writes daily/<day>, includes cups with raised minimums, caps per c
   // old days are removed
   put(`daily/${utcDay(Date.now() - 5 * 864e5)}`, { list: [] }); run(); assert.ok(!fs.existsSync(path.join(dir, ".sync-out", "daily", utcDay(Date.now() - 5 * 864e5) + ".json")));
   run({ DAILY_PER_COMP: "1", DAILY_PER_CUP: "1" }); for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) for (const c of ["L1", "L2"]) assert.ok(read(d).list.filter((x) => x.c === c && x.t > nowS).length <= 1);
+  // npm run picks:why -- "<name>": explains one competition, writes nothing
+  const before = fs.readFileSync(path.join(dir, ".sync-out", "daily", utcDay(Date.now()) + ".json"), "utf8");
+  const w = spawnSync(process.execPath, [path.join(ROOT, "scripts", "picks.mjs"), "--why", "test cup"], { cwd: dir, env: { ...process.env, DRY_RUN: "1" }, encoding: "utf8" });
+  assert.equal(w.status, 0, w.stdout + w.stderr); assert.match(w.stdout, /Test Cup \(L2, cup\/continental: raised minimums\): \d+ fixtures qualify, \d+ do not/); assert.ok(!/Test League/.test(w.stdout), "only the named competition");
+  assert.equal(fs.readFileSync(path.join(dir, ".sync-out", "daily", utcDay(Date.now()) + ".json"), "utf8"), before, "explain-only run writes nothing");
+  assert.notEqual(spawnSync(process.execPath, [path.join(ROOT, "scripts", "picks.mjs"), "--why"], { cwd: dir, env: { ...process.env, DRY_RUN: "1" }, encoding: "utf8" }).status, 0, "--why needs a name");
   fs.rmSync(dir, { recursive: true, force: true });
+});
+t("dayPicks explains every fixture that gets no pick (why)", () => {
+  const ids = [1, 2, 3, 4], results = []; let id = 1;
+  for (let rep = 0; rep < 3; rep++) for (const h of ids) for (const a of ids) if (h !== a) { const k = id % 3; results.push({ id: id++, h, a, hg: k === 2 ? 1 : k === 1 ? 2 : 1, ag: k === 2 ? 2 : 1, t: 1e6 - id * 1000, r: 1, s: 0 }); }
+  results.push({ id: id++, h: 9, a: 1, hg: 1, ag: 0, t: 5e5, r: 1, s: 0 });   // team 9 has a single match
+  const teams = [...ids, 9].map((i) => ({ id: i, name: "T" + i })), fx = (i, h, a) => ({ id: i, h, a, t: 2e6 + i, s: "notstarted" });
+  const why = [], rows = dayPicks({ code: "L1", comp: null, fixtures: [fx(1, 1, 2), fx(2, 9, 1), fx(3, 1, 99), { ...fx(4, 3, 4), s: "postponed" }], teams, results, nowSec: 1.5e6, untilSec: 3e6, why });
+  assert.equal(rows.length, 0);
+  assert.deepEqual(why.map((x) => x.id), [1, 2, 3], "postponed matches are not reported");
+  assert.match(why[0].reason, /^no selection clears its minimum: .*% < 50%.*% < 60%.*% < 60%/); assert.match(why[1].reason, /fewer than 8 matches/); assert.match(why[2].reason, /missing from this competition/);
+  assert.deepEqual(dayPicks({ code: "L1", comp: null, fixtures: [fx(1, 1, 2)], teams, results, nowSec: 1.5e6, untilSec: 3e6 }), [], "why is optional");
 });
 console.log(`\nALL DAILY PICKS TESTS PASSED (${n})`);

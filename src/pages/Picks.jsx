@@ -7,7 +7,9 @@ import { canEditPick, editPatch, pickWithLive } from "../lib/pickstate";
 import { minuteLabel, phaseOf } from "../lib/phase";
 import { useLive } from "../lib/useLive";
 import { MARKETS, dayLabel, pct, pickLabel, pickMarket } from "../lib/util";
-import { buildReceipts, downloadReceipt, money } from "../lib/receipts";
+import { buildReceipts, dayKey, downloadReceipt, money } from "../lib/receipts";
+import { RECENT_DAYS, groupFinished, groupKeys, holds } from "../lib/grouping";
+import { shiftDay } from "../lib/board";
 import { Pager, SearchBox, Spin, Stat, hit, usePaged } from "../components/ui";
 
 // Inline form to add or change the numbers on an open pick: odds, stake, your own probability. onSave resolves to an error message or null.
@@ -62,7 +64,7 @@ function PickLine({ p, lg, dense, canEdit, editing, onEdit, onSave, onReanalyze,
 const tone = (r) => (!r.settled ? "secondary" : r.won / r.settled >= 0.6 ? "success" : r.won / r.settled >= 0.4 ? "warning" : "danger");
 const shortDay = (t) => new Date(t * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 
-// One chip per recent finished day (colour = hit rate): tap to open that day and scroll to it.
+// One chip per recent finished day (the last 7 days; colour = hit rate): tap to open that day and scroll to it.
 function DayStrip({ list, onJump }) {
   return (
     <div className="d-flex flex-wrap gap-2" role="group" aria-label="Jump to a day">
@@ -103,7 +105,23 @@ function Receipt({ r, d, who, open, onToggle, renderPick }) {
   );
 }
 
-const PAGE_FINISHED = 10;   // finished days per page (a day is one collapsed line until opened)
+// A folded week, month or year of older finished days: one summary line (days, picks, wins, hit-rate bar, profit) that opens the days or weeks inside.
+const LEVEL_ICON = { week: "calendar-week", month: "calendar3", year: "calendar-range" };
+function Group({ g, open, onToggle, children }) {
+  const { stats: s } = g, rate = s.settled ? s.won / s.settled : null, t = tone({ settled: s.settled, won: s.won });
+  const key = (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onToggle(); } };
+  return (
+    <Card id={g.key}>
+      <Card.Header className="d-flex align-items-center gap-2 flex-wrap receipt-head" role="button" tabIndex={0} aria-expanded={open} onClick={onToggle} onKeyDown={key}>
+        <i className={`bi bi-chevron-${open ? "down" : "right"} text-body-secondary`} aria-hidden="true" />
+        <div className="me-auto"><div className="fw-semibold"><i className={`bi bi-${LEVEL_ICON[g.level]} me-2 text-body-secondary`} />{g.level === "week" ? "Week " : ""}{g.label}</div><div className="tiny text-body-secondary">{s.days} day{s.days > 1 ? "s" : ""} · {s.picks} pick{s.picks > 1 ? "s" : ""}</div></div>
+        {rate != null && <div className="d-flex align-items-center gap-2 small text-body-secondary" title={`${pct(rate)} hit rate`}>Won <strong className="text-body">{s.won}/{s.settled}</strong><div className="hit-bar"><span className={"bg-" + t} style={{ width: `${Math.round(rate * 100)}%` }} /></div></div>}
+        {s.profit != null && <strong className={"small " + (s.profit >= 0 ? "text-success" : "text-danger")}>{money(s.profit)}</strong>}
+      </Card.Header>
+      {open && <Card.Body className="d-flex flex-column gap-2 p-2 p-md-3">{children}</Card.Body>}
+    </Card>
+  );
+}
 
 export default function Picks({ user, d, history, nav }) {
   const [saved, setSaved] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState(""), [opened, setOpened] = useState({}), [editId, setEditId] = useState(null), { doc: liveDoc, finals, nowMs } = useLive();
@@ -128,16 +146,24 @@ export default function Picks({ user, d, history, nav }) {
   const pool = history ? receipts.filter((r) => !r.open && r.settled) : receipts;
   const match = (r) => !q.trim() || r.picks.some((p) => hit(q, `${p.home} ${p.away} ${d.byCode[p.league]?.name ?? ""} ${pickLabel(p)} ${r.id} ${dayLabel(r.t)}`));
   const ongoing = pool.filter((r) => r.open && match(r)), finished = pool.filter((r) => !r.open && match(r));
-  const pgO = usePaged(ongoing, 5, q + history + "o"), pg = usePaged(finished, PAGE_FINISHED, q + history);
-  // days open or closed: the choice of the user wins; otherwise ongoing days and the newest finished day are open (everything while searching)
+  const pgO = usePaged(ongoing, 5, q + history + "o");
+  // finished days: the last 7 days stay single days, older ones fold into weeks > months > years (a folded group is one line until opened)
+  const today = dayKey(nowMs / 1000), cutoff = shiftDay(today, -RECENT_DAYS);
+  const tree = useMemo(() => groupFinished(finished, today), [finished, today]), recent = finished.filter((r) => r.key >= cutoff);
+  // days and groups open or closed: the choice of the user wins; otherwise ongoing days, the newest finished day and the group holding it are open (everything while searching)
   const isOpen = (r) => (r.key in opened ? opened[r.key] : q.trim() ? true : r.open || r.key === finished[0]?.key);
   const toggle = (r) => setOpened((o) => ({ ...o, [r.key]: !isOpen(r) }));
-  const setAll = (v) => setOpened(Object.fromEntries(finished.map((r) => [r.key, v])));
+  const isGroupOpen = (g) => (g.key in opened ? opened[g.key] : q.trim() ? true : !!finished[0] && holds(g, finished[0].key));
+  const toggleGroup = (g) => setOpened((o) => ({ ...o, [g.key]: !isGroupOpen(g) }));
+  const setAll = (v) => setOpened(Object.fromEntries([...finished.map((r) => r.key), ...groupKeys(tree)].map((k) => [k, v])));
   const jump = (key) => {
-    setOpened((o) => ({ ...o, [key]: true })); pg.setPage(Math.floor(finished.findIndex((r) => r.key === key) / PAGE_FINISHED));
+    setOpened((o) => ({ ...o, [key]: true }));
     setTimeout(() => document.getElementById("r-" + key)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
   };
   const renderPick = (p) => <PickLine key={p.id} p={p} lg={d.byCode[p.league]} dense canEdit={canEditPick(p, nowMs)} editing={editId === p.id} onEdit={setEditId} onSave={update} onRemove={remove} onReanalyze={(x) => nav?.analyze({ league: x.league, h: x.homeId, a: x.awayId })} />;
+  const renderNode = (n) => n.type === "day"
+    ? <Receipt key={n.r.key} r={n.r} d={d} who={who} open={isOpen(n.r)} onToggle={() => toggle(n.r)} renderPick={renderPick} />
+    : <Group key={n.key} g={n} open={isGroupOpen(n)} onToggle={() => toggleGroup(n)}>{n.children.map(renderNode)}</Group>;
   const group = (keyFn, keys) => keys.map((k) => [k, done.filter((r) => keyFn(r) === k)]).filter(([, l]) => l.length);
   const tiles = [["Saved", all.length], ["Settled", done.length], ["Hit rate", done.length ? pct(won(done) / done.length) : "n/a"],
     ...(staked.length ? [["Profit (units)", money(profit)], ["ROI", stakedSum ? pct(profit / stakedSum, 1) : "n/a"]] : [])];
@@ -162,10 +188,9 @@ export default function Picks({ user, d, history, nav }) {
           {!history && <h2 className="h5 mb-0 me-auto"><i className="bi bi-check2-circle me-2 text-primary" />Finished <span className="small text-body-secondary fw-normal">{finished.length} day{finished.length > 1 ? "s" : ""}</span></h2>}
           <div className={"d-flex gap-2" + (history ? " ms-auto" : "")}><Button size="sm" variant="outline-secondary" onClick={() => setAll(true)}><i className="bi bi-arrows-expand me-1" />Expand all</Button><Button size="sm" variant="outline-secondary" onClick={() => setAll(false)}><i className="bi bi-arrows-collapse me-1" />Collapse all</Button></div>
         </div>
-        {finished.length > 1 && <DayStrip list={finished} onJump={jump} />}
-        {pg.slice.map((r) => <Receipt key={r.key} r={r} d={d} who={who} open={isOpen(r)} onToggle={() => toggle(r)} renderPick={renderPick} />)}
+        {recent.length > 1 && <DayStrip list={recent} onJump={jump} />}
+        {tree.map(renderNode)}
       </>}
-      <Pager page={pg.page} pages={pg.pages} onChange={pg.setPage} />
     </div>
   );
 }

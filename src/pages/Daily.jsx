@@ -13,16 +13,20 @@ const DAYS = 3;   // today and the next two local days
 
 export default function Daily({ user, d }) {
   const today = dayKey(Date.now() / 1000), days = Array.from({ length: DAYS }, (_, i) => shiftDay(today, i));
-  const [day, setDay] = useState(today), [comp, setComp] = useState(""), [saved, setSaved] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
+  const [day, setDay] = useState(today), [comp, setComp] = useState(""), [opened, setOpened] = useState({}), [saved, setSaved] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
   const { rows = [], missing, loading, err } = useDaily(day), { doc: liveDoc, finals, nowMs } = useLive();
   useEffect(() => { savedPickIds(user.uid).then(setSaved).catch((e) => setMsg({ type: "danger", text: "Could not read your picks: " + e.message })); }, [user]);
-  useEffect(() => setComp(""), [day]);
+  useEffect(() => { setComp(""); setOpened({}); }, [day]);
 
   // a pick can be confirmed only while its match has not started (same rule as saving from the analysis page)
   const open = (x) => phaseOf({ id: x.id, t: x.t }, liveDoc, nowMs, finals).kind === "upcoming";
   const groups = useMemo(() => groupByComp(rows, d.byCode), [rows, d.byCode]);
   const shown = comp ? groups.filter((g) => g.code === comp) : groups, flat = shown.flatMap((g) => g.picks);
   const todo = (list) => list.filter((x) => saved && !saved.has(pickId(x)) && open(x));
+  // competitions open or closed: the choice of the user wins; otherwise only the first is open (all of a single one)
+  const isOpen = (g) => (g.code in opened ? opened[g.code] : g.code === shown[0]?.code);
+  const toggle = (g) => setOpened((o) => ({ ...o, [g.code]: !isOpen(g) }));
+  const setAll = (v) => setOpened(Object.fromEntries(shown.map((g) => [g.code, v])));
   const who = user.displayName || user.email || "";
 
   async function confirm(list) {
@@ -47,7 +51,8 @@ export default function Daily({ user, d }) {
       <p className="small text-body-secondary mb-0">The model's most likely result, goals or both-teams-to-score pick for each upcoming match, chosen automatically after every data sync (up to {DAILY.cap} per competition and day, only above a minimum probability, raised for cups and continental competitions). They carry no bookmaker odds: confirm the ones you like to save them to My Picks, then compare any of them with a real price in the Value finder.</p>
       <div className="d-flex flex-wrap gap-2 align-items-center">
         {days.map((k) => <Button key={k} size="sm" variant={k === day ? "primary" : "outline-secondary"} onClick={() => setDay(k)}>{dayName(k, today, { month: true })}</Button>)}
-        {groups.length > 1 && <Form.Select size="sm" aria-label="Competition" value={comp} onChange={(e) => setComp(e.target.value)} style={{ maxWidth: 260 }} className="ms-md-auto"><option value="">All competitions ({groups.length})</option>{groups.map((g) => <option key={g.code} value={g.code}>{g.name}</option>)}</Form.Select>}
+        {shown.length > 1 && <div className="d-flex gap-2 ms-md-auto"><Button size="sm" variant="outline-secondary" onClick={() => setAll(true)}><i className="bi bi-arrows-expand me-1" />Expand all</Button><Button size="sm" variant="outline-secondary" onClick={() => setAll(false)}><i className="bi bi-arrows-collapse me-1" />Collapse all</Button></div>}
+        {groups.length > 1 && <Form.Select size="sm" aria-label="Competition" value={comp} onChange={(e) => setComp(e.target.value)} style={{ maxWidth: 260 }} className={shown.length > 1 ? "" : "ms-md-auto"}><option value="">All competitions ({groups.length})</option>{groups.map((g) => <option key={g.code} value={g.code}>{g.name}</option>)}</Form.Select>}
       </div>
       {msg && <Alert variant={msg.type} className="mb-0" dismissible onClose={() => setMsg(null)}>{msg.text}</Alert>}
       {err && <Alert variant="danger" className="mb-0">Could not load the picks: {err}</Alert>}
@@ -56,13 +61,14 @@ export default function Daily({ user, d }) {
       {!loading && !err && !missing && !groups.length && <Alert variant="secondary" className="mb-0">No picks for this day: no upcoming match cleared the minimum probability, or the teams playing have too little data.</Alert>}
       {shown.map((g) => (
         <Card key={g.code}>
-          <Card.Header className="d-flex align-items-center gap-2 flex-wrap">
+          <Card.Header className="d-flex align-items-center gap-2 flex-wrap receipt-head" role="button" tabIndex={0} aria-expanded={isOpen(g)} onClick={() => toggle(g)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggle(g); } }}>
+            <i className={`bi bi-chevron-${isOpen(g) ? "down" : "right"} text-body-secondary`} aria-hidden="true" />
             <LeagueLogo lg={d.byCode[g.code] ?? { id: g.id, name: g.name }} size={26} />
-            <div className="me-auto"><div className="fw-semibold">{g.name}</div><div className="tiny text-body-secondary">{g.country || "International"} · {g.picks.length} pick{g.picks.length > 1 ? "s" : ""}{d.byCode[g.code]?.kind === "comp" && <Badge bg="warning" text="dark" className="ms-2" title="Cup or continental competition: strengths come only from this competition's own matches, so the minimum probability is higher and the estimate rougher">Rough model</Badge>}</div></div>
-            <Button size="sm" variant="outline-secondary" onClick={() => download(g.picks, g.code)}><i className="bi bi-download me-1" />Download</Button>
-            <Button size="sm" variant="outline-primary" disabled={busy || !todo(g.picks).length} onClick={() => confirm(todo(g.picks))}><i className="bi bi-check2 me-1" />Confirm{todo(g.picks).length ? ` (${todo(g.picks).length})` : ""}</Button>
+            <div className="me-auto"><div className="fw-semibold">{g.name}</div><div className="tiny text-body-secondary">{g.country || "International"} · {g.picks.length} pick{g.picks.length > 1 ? "s" : ""}{saved && saved.size > 0 && <> · {g.picks.filter((x) => saved.has(pickId(x))).length} confirmed</>}{d.byCode[g.code]?.kind === "comp" && <Badge bg="warning" text="dark" className="ms-2" title="Cup or continental competition: strengths come only from this competition's own matches, so the minimum probability is higher and the estimate rougher">Rough model</Badge>}</div></div>
+            <Button size="sm" variant="outline-secondary" onClick={(e) => { e.stopPropagation(); download(g.picks, g.code); }}><i className="bi bi-download me-1" />Download</Button>
+            <Button size="sm" variant="outline-primary" disabled={busy || !todo(g.picks).length} onClick={(e) => { e.stopPropagation(); confirm(todo(g.picks)); }}><i className="bi bi-check2 me-1" />Confirm{todo(g.picks).length ? ` (${todo(g.picks).length})` : ""}</Button>
           </Card.Header>
-          <ListGroup variant="flush">{g.picks.map((x) => {
+          {isOpen(g) && <ListGroup variant="flush">{g.picks.map((x) => {
             const done = saved?.has(pickId(x)), can = !done && open(x);
             return (
               <ListGroup.Item key={pickId(x)} className="d-flex align-items-center gap-3 py-3 flex-wrap">
@@ -77,7 +83,7 @@ export default function Daily({ user, d }) {
                     : <Badge bg="secondary" title="Picks can only be confirmed before kick-off">Closed</Badge>}
                 </div>
               </ListGroup.Item>);
-          })}</ListGroup>
+          })}</ListGroup>}
         </Card>))}
       <p className="tiny text-body-secondary mb-0"><i className="bi bi-exclamation-triangle me-1" />Statistical estimates, not guarantees. The same model as the Analysis tab; a pick can differ slightly if you have loaded all-competition head-to-head there. 18+, bet responsibly.</p>
     </div>

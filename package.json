@@ -13,7 +13,7 @@
     "sync:window": "node --env-file=.env scripts/sync.mjs",
     "sync:requests": "node --env-file=.env scripts/sync.mjs --requests-only",
     "sync:dry": "DRY_RUN=1 node --env-file=.env scripts/sync.mjs",
-    "test": "node scripts/dev/test-model.mjs && node scripts/dev/test-bsd.mjs && node scripts/dev/test-value.mjs && node scripts/dev/test-live.mjs && node scripts/dev/test-board.mjs && node scripts/dev/test-secrets.mjs && node scripts/dev/test-requests.mjs && node scripts/dev/test-daily.mjs && node scripts/dev/test-rules-contract.mjs",
+    "test": "node scripts/dev/test-model.mjs && node scripts/dev/test-bsd.mjs && node scripts/dev/test-value.mjs && node scripts/dev/test-live.mjs && node scripts/dev/test-board.mjs && node scripts/dev/test-secrets.mjs && node scripts/dev/test-requests.mjs && node scripts/dev/test-daily.mjs && node scripts/dev/test-grouping.mjs && node scripts/dev/test-rules-contract.mjs",
     "live": "node scripts/live.mjs",
     "live:local": "node --env-file=.env scripts/live.mjs",
     "probe:live": "node --env-file=.env scripts/probe-live.mjs",
@@ -26,7 +26,8 @@
     "schedule": "node scripts/schedule.mjs",
     "schedule:local": "node --env-file=.env scripts/schedule.mjs",
     "picks": "node scripts/picks.mjs",
-    "picks:local": "node --env-file=.env scripts/picks.mjs"
+    "picks:local": "node --env-file=.env scripts/picks.mjs",
+    "picks:why": "node --env-file=.env scripts/picks.mjs --why"
   },
   "dependencies": {
     "bootstrap": "^5.3.3",
