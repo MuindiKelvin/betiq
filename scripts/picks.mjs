@@ -1,14 +1,14 @@
 // BetIQ daily picks: stored fixtures + results of every synced competition -> daily/<YYYY-MM-DD> (one document per UTC day) for the Daily Picks page.
 // Makes NO API calls: it only reads what the data sync already wrote (catalog, meta, teams, fixtures, seasons) and runs the app's own model (src/lib).
 //   npm run picks:local     (reads .env)       npm run picks   (CI: FIREBASE_SERVICE_ACCOUNT)
-// Env: DAILY_AHEAD_DAYS (3: today + 3 more UTC days), DAILY_PER_COMP (5), DRY_RUN=1 (reads/writes ./.sync-out)
+// Env: DAILY_AHEAD_DAYS (3: today + 3 more UTC days), DAILY_PER_COMP (5 per league), DAILY_PER_CUP (10 per cup / continental competition), DRY_RUN=1 (reads/writes ./.sync-out)
 // Picks of matches that already started are kept exactly as stored (frozen); the rest are recomputed on every run (see mergeDay in src/lib/daily.js).
 import fs from "node:fs";
 import path from "node:path";
 import { DAILY, dayPicks, mergeDay, utcDay } from "../src/lib/daily.js";
 
 const env = process.env, int = (k, d) => (Number.isFinite(+env[k]) && env[k] !== undefined && env[k] !== "" ? +env[k] : d);
-const AHEAD = int("DAILY_AHEAD_DAYS", DAILY.ahead), CAP = int("DAILY_PER_COMP", DAILY.cap), DRY = env.DRY_RUN === "1";
+const AHEAD = int("DAILY_AHEAD_DAYS", DAILY.ahead), CAP = int("DAILY_PER_COMP", DAILY.cap), CAP_CUP = int("DAILY_PER_CUP", DAILY.capCup), DRY = env.DRY_RUN === "1";
 
 let store;
 if (DRY) {
@@ -42,12 +42,12 @@ for (const l of cat.leagues) {
     comps++;
   } catch (e) { skipped++; console.error(`picks: ${l.code} skipped: ${e.message}`); }
 }
-const byDay = new Map();
+const kinds = Object.fromEntries(cat.leagues.map((l) => [l.code, l.kind])), byDay = new Map();
 for (let i = 0; i <= AHEAD; i++) byDay.set(utcDay(nowMs + i * 864e5), []);
 for (const x of fresh) byDay.get(utcDay(x.t * 1000))?.push(x);
 const updated = new Date().toISOString(); let n = 0;
 for (const [day, list] of byDay) {
-  const rows = mergeDay({ prev: (await store.get(`daily/${day}`))?.list, fresh: list, nowSec, cap: CAP });
+  const rows = mergeDay({ prev: (await store.get(`daily/${day}`))?.list, fresh: list, nowSec, cap: (c) => (kinds[c] === "comp" ? CAP_CUP : CAP) });
   await store.set(`daily/${day}`, JSON.parse(JSON.stringify({ day, n: rows.length, list: rows, updated }))); n += rows.length;
 }
 const keep = utcDay(nowMs - 864e5);                                                             // yesterday stays (a local day can span two UTC days); older days go

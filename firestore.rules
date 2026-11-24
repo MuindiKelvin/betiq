@@ -32,7 +32,7 @@ service cloud.firestore {
         && request.resource.data.at == request.time;
       allow update, delete: if false;
     }
-    // A user's own picks. The app only ever creates (shape below), reads and deletes them; it never updates one, so updates are denied.
+    // A user's own picks: created (shape below), read, deleted, and edited in four fields only (see the update rule).
     match /users/{uid}/picks/{id} {
       allow read, delete: if request.auth != null && request.auth.uid == uid;
       allow create: if request.auth != null && request.auth.uid == uid
@@ -50,6 +50,14 @@ service cloud.firestore {
         && numOrNull(request.resource.data.get('odds', null)) && numOrNull(request.resource.data.get('stake', null))
         && numOrNull(request.resource.data.get('myProb', null)) && numOrNull(request.resource.data.get('mktProb', null))
         && request.resource.data.createdAt == request.time;
+      // Edit: only the numbers the user typed (odds, stake, own probability, market probability), and only before kick-off. The selection, the model probability,
+      // the match and the dates can never change, so a pick can not be rewritten once the result is known. A pick without a kick-off time can not be edited.
+      allow update: if request.auth != null && request.auth.uid == uid
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['odds', 'stake', 'myProb', 'mktProb'])
+        && resource.data.get('kickoff', null) is number
+        && request.time.toMillis() < resource.data.kickoff * 1000
+        && numOrNull(request.resource.data.get('odds', null)) && numOrNull(request.resource.data.get('stake', null))
+        && numOrNull(request.resource.data.get('myProb', null)) && numOrNull(request.resource.data.get('mktProb', null));
     }
   }
 }

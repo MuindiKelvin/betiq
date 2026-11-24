@@ -7,7 +7,7 @@ import { analyze, selProb } from "./analysis.js";
 import { TOP } from "./board.js";
 import { MARKETS, timeLabel, tzAt } from "./util.js";
 
-export const DAILY = { cap: 5, ahead: 3, roughPlus: 0.05, min: { "1X2": 0.5, OU25: 0.6, BTTS: 0.6 } };   // cap: picks per competition per UTC day; ahead: UTC days after today
+export const DAILY = { cap: 5, capCup: 10, ahead: 3, roughPlus: 0.05, min: { "1X2": 0.5, OU25: 0.6, BTTS: 0.6 } };   // cap / capCup: picks per league / per cup or continental competition per UTC day (a Champions League night has up to 18 matches); ahead: UTC days after today
 export const utcDay = (ms) => new Date(ms).toISOString().slice(0, 10);
 const rnd = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
 
@@ -43,12 +43,13 @@ export function dayPicks({ code, comp, fixtures, teams, results, nowSec, untilSe
 // One UTC day. prev: rows already stored for the day; fresh: rows computed now (all of them kick off after nowSec).
 // A pick whose match has started is frozen: it stays exactly as it was and is never recomputed, so the list does not change after kick-off.
 // The rest is replaced by the fresh rows, best probability first, up to `cap` picks per competition (frozen ones count).
+// cap: a number, or a function of the competition code (leagues and cups have different caps).
 export function mergeDay({ prev, fresh, nowSec, cap = DAILY.cap }) {
-  const key = (x) => `${x.c}:${x.id}`, frozen = (prev ?? []).filter((x) => x.t <= nowSec), ids = new Set(frozen.map(key)), per = new Map();
+  const capOf = typeof cap === "function" ? cap : () => cap, key = (x) => `${x.c}:${x.id}`, frozen = (prev ?? []).filter((x) => x.t <= nowSec), ids = new Set(frozen.map(key)), per = new Map();
   for (const x of frozen) per.set(x.c, (per.get(x.c) ?? 0) + 1);
   const add = [];
   for (const x of [...fresh].sort((a, b) => b.p - a.p || a.t - b.t || a.id - b.id)) {
-    if (ids.has(key(x)) || (per.get(x.c) ?? 0) >= cap) continue;
+    if (ids.has(key(x)) || (per.get(x.c) ?? 0) >= capOf(x.c)) continue;
     per.set(x.c, (per.get(x.c) ?? 0) + 1); add.push(x);
   }
   return [...frozen, ...add].sort((a, b) => a.t - b.t || a.id - b.id);

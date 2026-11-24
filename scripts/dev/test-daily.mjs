@@ -12,6 +12,7 @@ import { removeMargin } from "../../src/lib/value.js";
 import { DAILY, bestPick, dailyReceipt, groupByComp, mergeDay, pickId, utcDay } from "../../src/lib/daily.js";
 import { receiptPdf } from "../../src/lib/receipts.js";
 import { isVerified } from "../../src/lib/verified.js";
+import { EDITABLE, canEditPick, editPatch } from "../../src/lib/pickstate.js";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".."), near = (a, b, e = 1e-9) => Math.abs(a - b) < e;
 let n = 0; const t = (name, fn) => { fn(); n++; console.log("ok  " + name); };
@@ -81,6 +82,13 @@ t("mergeDay: frozen picks stay, the rest is recomputed best first, capped per co
   assert.equal(mergeDay({ prev: [], fresh: Array.from({ length: 9 }, (_, i) => row(i + 1, "L1", 2000 + i, 0.5 + i / 100)), nowSec: 1 }).length, DAILY.cap);
   const f = [row(1, "L1", 2000, 0.6)]; mergeDay({ prev: [], fresh: f, nowSec: 1 }); assert.deepEqual(f, [row(1, "L1", 2000, 0.6)], "inputs are not mutated");
 });
+t("mergeDay: the cap may depend on the competition (leagues 5, cups more)", () => {
+  const fresh = [...Array(12)].map((_, i) => row(i + 1, "L1", 2000 + i, 0.9 - i / 100)).concat([...Array(12)].map((_, i) => row(i + 1, "L2", 2000 + i, 0.9 - i / 100)));
+  const out = mergeDay({ prev: [], fresh, nowSec: 1, cap: (c) => (c === "L2" ? DAILY.capCup : DAILY.cap) });
+  assert.equal(out.filter((x) => x.c === "L1").length, DAILY.cap); assert.equal(out.filter((x) => x.c === "L2").length, DAILY.capCup);
+  assert.ok(DAILY.capCup > DAILY.cap);
+  assert.deepEqual(out.filter((x) => x.c === "L2").map((x) => x.id).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], "the best ones are kept");
+});
 t("groupByComp: most used competitions first, then by name; picks by kick-off", () => {
   const byCode = { L1: { id: 1, name: "Premier League", country: "England" }, L9: { id: 9, name: "Zeta League", country: "X" }, L500: { id: 500, name: "Alpha Cup", country: "Y" } };
   const g = groupByComp([row(1, "L500", 5, 0.6), row(2, "L9", 5, 0.6), row(3, "L1", 9, 0.6), row(4, "L1", 4, 0.6), row(5, "L77", 1, 0.6)], byCode);
@@ -88,6 +96,27 @@ t("groupByComp: most used competitions first, then by name; picks by kick-off", 
   assert.deepEqual(g[0].picks.map((x) => x.id), [4, 3]); assert.equal(g[0].name, "Premier League"); assert.equal(g.find((x) => x.code === "L77").name, "L77");
 });
 t("pickId is fixed per match and market", () => { assert.equal(pickId({ id: 12, m: "OU25" }), "a_12_OU25"); assert.notEqual(pickId({ id: 12, m: "BTTS" }), pickId({ id: 12, m: "OU25" })); });
+
+/* ---------- editing a saved pick ---------- */
+const pk = (o = {}) => ({ v: 3, matchId: 7, kickoff: 2000, odds: null, stake: null, myProb: null, mktProb: null, ...o });
+t("canEditPick: tracked, kick-off still ahead, nothing known about the match yet", () => {
+  assert.equal(canEditPick(pk(), 1999 * 1000), true);
+  assert.equal(canEditPick(pk(), 2000 * 1000), false, "at kick-off it is closed (the rule uses a strict less-than)");
+  assert.equal(canEditPick(pk(), 2500 * 1000), false);
+  assert.equal(canEditPick(pk({ kickoff: null }), 0), false); assert.equal(canEditPick(pk({ matchId: null }), 0), false); assert.equal(canEditPick(pk({ v: 2 }), 0), false);
+  assert.equal(canEditPick(pk({ won: true }), 0), false); assert.equal(canEditPick(pk({ live: {} }), 0), false); assert.equal(canEditPick(pk({ wait: "postponed" }), 0), false);
+  assert.deepEqual([...EDITABLE], ["odds", "stake", "myProb", "mktProb"]);
+});
+t("editPatch: validates odds, stake and own % and clears the stale market probability", () => {
+  assert.deepEqual(editPatch(pk(), { odds: "2.10", stake: "10", mine: "55" }).patch, { odds: 2.1, stake: 10, myProb: 0.55, mktProb: null });
+  assert.deepEqual(editPatch(pk(), { odds: "2,5", stake: "", mine: "" }).patch, { odds: 2.5, stake: null, myProb: null, mktProb: null }, "comma decimals work");
+  assert.deepEqual(editPatch(pk(), { odds: "", stake: "", mine: "" }).patch, { odds: null, stake: null, myProb: null, mktProb: null }, "everything can be cleared");
+  assert.equal(editPatch(pk({ odds: 2, mktProb: 0.4 }), { odds: "2", stake: "5", mine: "" }).patch.mktProb, 0.4, "same odds keep the market probability");
+  assert.equal(editPatch(pk({ odds: 2, mktProb: 0.4 }), { odds: "2.2", stake: "", mine: "" }).patch.mktProb, null, "new odds clear it");
+  for (const bad of [{ odds: "1" }, { odds: "0.9" }, { odds: "abc" }, { odds: "2.1abc" }, { odds: "Infinity" }, { odds: "2", stake: "0" }, { odds: "2", stake: "-3" }, { odds: "2", stake: "x" }, { odds: "", stake: "5" }, { odds: "2", mine: "0" }, { odds: "2", mine: "100" }, { odds: "2", mine: "abc" }])
+    assert.ok(editPatch(pk(), { stake: "", mine: "", ...bad }).error, JSON.stringify(bad));
+  for (const k of Object.keys(editPatch(pk(), { odds: "2", stake: "1", mine: "5" }).patch)) assert.ok(EDITABLE.includes(k));
+});
 
 /* ---------- PDF ---------- */
 t("daily receipt PDF: own title and badge, kick-off notes, valid structure; normal receipts unchanged", () => {
@@ -136,7 +165,7 @@ t("picks.mjs: writes daily/<day>, includes cups with raised minimums, caps per c
   for (const x of list.filter((y) => y.c === "L2")) assert.ok(x.p >= DAILY.min[x.m] + DAILY.roughPlus - 1e-9, "cup picks clear the raised minimum");
   assert.ok(list.every((x) => x.t > nowS && x.id >= 90000 && x.id < 90100), "no postponed, started or far-future matches");
   for (const x of list) { assert.ok(x.p >= DAILY.min[x.m] && x.p <= 1 && MARKETS[x.m].sel[x.s] && x.hn.startsWith("Team ") && x.x.length === 2); }
-  for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) { const l = read(d).list; for (const c of ["L1", "L2"]) assert.ok(l.filter((x) => x.c === c).length <= DAILY.cap, "cap per competition per day"); assert.ok(l.every((x) => utcDay(x.t * 1000) === d), "rows sit in their own UTC day"); }
+  for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) { const l = read(d).list; for (const c of ["L1", "L2"]) assert.ok(l.filter((x) => x.c === c).length <= (c === "L2" ? DAILY.capCup : DAILY.cap), "cap per competition per day (cups have their own)"); assert.ok(l.every((x) => utcDay(x.t * 1000) === d), "rows sit in their own UTC day"); }
   assert.equal(read(tomorrow).n, read(tomorrow).list.length);
   // frozen: pretend the first pick's match has started and its stored values changed; a re-run must keep it and not duplicate it
   const first = list[0], d1 = utcDay(first.t * 1000), doc = read(d1), idx = doc.list.findIndex((x) => x.c === first.c && x.id === first.id);
@@ -145,7 +174,7 @@ t("picks.mjs: writes daily/<day>, includes cups with raised minimums, caps per c
   const after = read(d1).list.filter((x) => x.c === first.c && x.id === first.id); assert.equal(after.length, 1); assert.equal(after[0].p, 0.999); assert.equal(after[0].t, nowS - 60);
   // old days are removed
   put(`daily/${utcDay(Date.now() - 5 * 864e5)}`, { list: [] }); run(); assert.ok(!fs.existsSync(path.join(dir, ".sync-out", "daily", utcDay(Date.now() - 5 * 864e5) + ".json")));
-  run({ DAILY_PER_COMP: "1" }); for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) for (const c of ["L1", "L2"]) assert.ok(read(d).list.filter((x) => x.c === c && x.t > nowS).length <= 1);
+  run({ DAILY_PER_COMP: "1", DAILY_PER_CUP: "1" }); for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) for (const c of ["L1", "L2"]) assert.ok(read(d).list.filter((x) => x.c === c && x.t > nowS).length <= 1);
   fs.rmSync(dir, { recursive: true, force: true });
 });
 console.log(`\nALL DAILY PICKS TESTS PASSED (${n})`);

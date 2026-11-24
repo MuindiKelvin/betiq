@@ -32,11 +32,11 @@ function objectKeys(lit) {                          // lit = "{ a: 1, b, ...c }"
   return { keys, spread };
 }
 const files = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? files(path.join(dir, e.name)) : /\.(jsx?|mjs)$/.test(e.name) ? [path.join(dir, e.name)] : []));
-function writes(re) {                               // every `setDoc(...)` / `addDoc(...)` whose first argument matches re -> [{ file, keys, spread, valueOf(key) }]
+function writes(re, calls = "setDoc|addDoc") {                               // every `setDoc(...)` / `addDoc(...)` whose first argument matches re -> [{ file, keys, spread, valueOf(key) }]
   const out = [];
   for (const f of files(path.join(ROOT, "src"))) {
     const src = fs.readFileSync(f, "utf8");
-    for (const m of src.matchAll(/\b(setDoc|addDoc)\(/g)) {
+    for (const m of src.matchAll(new RegExp("\\b(" + calls + ")\\(", "g"))) {
       const open = m.index + m[0].length - 1, { parts } = splitTop(src, open, "(", ")");
       if (parts.length < 2 || !re.test(parts[0])) continue;
       out.push({ file: path.relative(ROOT, f), ...objectKeys(parts[1]), body: parts[1] });
@@ -84,9 +84,23 @@ for (const w of pickWrites) {
   assert.match(w.body, /createdAt\s*:\s*serverTimestamp\(\)/); assert.match(w.body, /\bv\s*:\s*3\b/);
 }
 ok(`${pickWrites.length} pick write sites match the rules`);
-assert.ok(!/allow[^;]*\b(update|write)\b/.test(pickRules), "the picks rules must not allow update or write");
-for (const f of files(path.join(ROOT, "src"))) assert.ok(!/updateDoc\(/.test(fs.readFileSync(f, "utf8")), `${f}: updateDoc is used but the rules deny updates to picks and requests`);
-ok("no client code updates documents (the rules deny updates)");
+assert.ok(!/allow[^;]*\bwrite\b/.test(pickRules), "the picks rules must not allow write (it would include update)");
+const editRule = /allow update:[^;]*;/.exec(pickRules)?.[0]; assert.ok(editRule, "the picks rules must have an update rule for editing odds and stake");
+const editable = list(/affectedKeys\(\)\.hasOnly\(\[([^\]]*)\]\)/.exec(editRule)?.[1] ?? "");
+assert.ok(editable.length > 0 && editable.every((k) => pickAllowed.includes(k)), "editable keys must be known pick keys");
+for (const k of ["v", "matchId", "kickoff", "league", "market", "selection", "prob", "createdAt", "home", "away"]) assert.ok(!editable.includes(k), `"${k}" must never be editable`);
+assert.match(editRule, /request\.auth\.uid == uid/, "only the owner may edit");
+assert.match(editRule, /resource\.data\.get\('kickoff', null\) is number/, "a pick without a kick-off time must not be editable");
+assert.match(editRule, /request\.time\.toMillis\(\) < resource\.data\.kickoff \* 1000/, "edits must stop at kick-off, judged on the stored kick-off and the server time");
+for (const k of editable) assert.match(editRule, new RegExp(`numOrNull\\(request\\.resource\\.data\\.get\\('${k}', null\\)\\)`), `edited "${k}" must be a number or null`);
+ok("the picks rules allow editing only " + editable.join(", ") + ", only by the owner and only before kick-off");
+const updWrites = writes(/"picks"/, "updateDoc");
+assert.ok(updWrites.length >= 1, "expected the edit (updateDoc on picks) in src/");
+for (const w of updWrites) { assert.ok(!w.spread, `${w.file}: a spread hides keys from this check`); assert.ok(w.keys.length > 0 && w.keys.every((k) => editable.includes(k)), `${w.file}: updateDoc sends ${w.keys} but only ${editable} may change`); }
+assert.equal(writes(/./, "updateDoc").length, updWrites.length, "updateDoc is only allowed on picks (requests stay create-only)");
+assert.ok(/allow update, delete: if false;/.test(reqRules), "requests must stay create-only");
+const { EDITABLE } = await import("../../src/lib/pickstate.js"); assert.deepEqual([...EDITABLE].sort(), [...editable].sort(), "EDITABLE in pickstate.js must equal the rule's list");
+ok("client edits touch only picks and only the editable keys (" + updWrites.length + " site)");
 
 /* ---------- never writable / never readable by clients ---------- */
 const readable = list(/coll in \[([^\]]*)\]/.exec(rules)[1]);

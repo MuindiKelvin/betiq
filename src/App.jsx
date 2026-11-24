@@ -95,7 +95,7 @@ export default function App() {
     daily: <Daily user={user} d={d} />,
     profile: <Profile user={user} d={d} onSignOut={out} />,
     help: <Help />,
-  }[tab] ?? <Picks key={tab} user={user} d={d} history={tab === "history"} />);
+  }[tab] ?? <Picks key={tab} user={user} d={d} nav={nav} history={tab === "history"} />);
   const Page = { manager: Manager, referee: Referee, venue: Venue }[ent?.kind];
   const top = d && (view ? <MatchView key={view.id} m={view} d={d} user={user} onBack={() => setView(null)} nav={nav} />
     : ent && Page ? <Page key={`${ent.kind}-${ent.id}`} ent={ent} d={d} nav={nav} onBack={() => setEnt(null)} />
