@@ -9,7 +9,7 @@ import { markets, predict, buildModel } from "../../src/lib/model.js";
 import { selProb } from "../../src/lib/analysis.js";
 import { MARKETS, isWin, settle } from "../../src/lib/util.js";
 import { removeMargin } from "../../src/lib/value.js";
-import { DAILY, bestPick, dailyReceipt, dayPicks, groupByComp, mergeDay, pickId, utcDay } from "../../src/lib/daily.js";
+import { DAILY, NO_PICK, bestPick, dailyReceipt, dayPicks, groupByComp, mergeDay, pickId, utcDay } from "../../src/lib/daily.js";
 import { receiptPdf } from "../../src/lib/receipts.js";
 import { isVerified } from "../../src/lib/verified.js";
 import { EDITABLE, canEditPick, editPatch } from "../../src/lib/pickstate.js";
@@ -175,6 +175,11 @@ t("picks.mjs: writes daily/<day>, includes cups with raised minimums, caps per c
   // old days are removed
   put(`daily/${utcDay(Date.now() - 5 * 864e5)}`, { list: [] }); run(); assert.ok(!fs.existsSync(path.join(dir, ".sync-out", "daily", utcDay(Date.now() - 5 * 864e5) + ".json")));
   run({ DAILY_PER_COMP: "1", DAILY_PER_CUP: "1" }); for (const d of [...Array(4)].map((_, i) => utcDay(Date.now() + i * 864e5))) for (const c of ["L1", "L2"]) assert.ok(read(d).list.filter((x) => x.c === c && x.t > nowS).length <= 1);
+  assert.ok([...Array(4)].some((_, i) => read(utcDay(Date.now() + i * 864e5)).skipped.some((x) => x.w === "cap")), "picks cut by the cap are listed as such");
+  // fixtures without a pick are stored with a reason code (the page lists them under "No pick")
+  const all = [...Array(4)].map((_, i) => read(utcDay(Date.now() + i * 864e5)));
+  for (const d of all) { assert.ok(Array.isArray(d.skipped)); for (const x of d.skipped) { assert.ok(NO_PICK[x.w] && x.c && x.id != null && x.hn && x.an && x.t > nowS, "a no-pick row has a known reason"); assert.ok(!d.list.some((p) => p.c === x.c && p.id === x.id), "a match is either a pick or a no-pick, never both"); } }
+  assert.ok(all.some((d) => d.skipped.length > 0), "the synthetic data has close matches that get no pick");
   // npm run picks:why -- "<name>": explains one competition, writes nothing
   const before = fs.readFileSync(path.join(dir, ".sync-out", "daily", utcDay(Date.now()) + ".json"), "utf8");
   const w = spawnSync(process.execPath, [path.join(ROOT, "scripts", "picks.mjs"), "--why", "test cup"], { cwd: dir, env: { ...process.env, DRY_RUN: "1" }, encoding: "utf8" });
@@ -191,6 +196,7 @@ t("dayPicks explains every fixture that gets no pick (why)", () => {
   const why = [], rows = dayPicks({ code: "L1", comp: null, fixtures: [fx(1, 1, 2), fx(2, 9, 1), fx(3, 1, 99), { ...fx(4, 3, 4), s: "postponed" }], teams, results, nowSec: 1.5e6, untilSec: 3e6, why });
   assert.equal(rows.length, 0);
   assert.deepEqual(why.map((x) => x.id), [1, 2, 3], "postponed matches are not reported");
+  assert.deepEqual(why.map((x) => x.code), ["low", "thin", "miss"]); assert.ok(why.every((x) => NO_PICK[x.code] && x.h != null && x.a != null && x.hn && x.an && x.t > 0), "each reason has a code with a label, the ids, names and kick-off");
   assert.match(why[0].reason, /^no selection clears its minimum: .*% < 50%.*% < 60%.*% < 60%/); assert.match(why[1].reason, /fewer than 8 matches/); assert.match(why[2].reason, /missing from this competition/);
   assert.deepEqual(dayPicks({ code: "L1", comp: null, fixtures: [fx(1, 1, 2)], teams, results, nowSec: 1.5e6, untilSec: 3e6 }), [], "why is optional");
 });

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Form, ListGroup } from "react-bootstrap";
 import { dayKey, dayName, shiftDay } from "../lib/board";
-import { DAILY, dailyReceipt, groupByComp, pickId } from "../lib/daily";
+import { DAILY, NO_PICK, dailyReceipt, groupByComp, pickId } from "../lib/daily";
 import { confirmPick, savedPickIds, useDaily } from "../lib/useDaily";
 import { useLive } from "../lib/useLive";
 import { phaseOf } from "../lib/phase";
@@ -13,14 +13,16 @@ const DAYS = 3;   // today and the next two local days
 
 export default function Daily({ user, d }) {
   const today = dayKey(Date.now() / 1000), days = Array.from({ length: DAYS }, (_, i) => shiftDay(today, i));
-  const [day, setDay] = useState(today), [comp, setComp] = useState(""), [opened, setOpened] = useState({}), [saved, setSaved] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
-  const { rows = [], missing, loading, err } = useDaily(day), { doc: liveDoc, finals, nowMs } = useLive();
+  const [day, setDay] = useState(today), [comp, setComp] = useState(""), [opened, setOpened] = useState({}), [openNo, setOpenNo] = useState({}), [saved, setSaved] = useState(null), [busy, setBusy] = useState(false), [msg, setMsg] = useState(null);
+  const { rows = [], skipped = [], missing, loading, err } = useDaily(day), { doc: liveDoc, finals, nowMs } = useLive();
   useEffect(() => { savedPickIds(user.uid).then(setSaved).catch((e) => setMsg({ type: "danger", text: "Could not read your picks: " + e.message })); }, [user]);
-  useEffect(() => { setComp(""); setOpened({}); }, [day]);
+  useEffect(() => { setComp(""); setOpened({}); setOpenNo({}); }, [day]);
 
   // a pick can be confirmed only while its match has not started (same rule as saving from the analysis page)
   const open = (x) => phaseOf({ id: x.id, t: x.t }, liveDoc, nowMs, finals).kind === "upcoming";
   const groups = useMemo(() => groupByComp(rows, d.byCode), [rows, d.byCode]);
+  // fixtures of each competition that got no pick, with the reason (so the list of matches is complete)
+  const noBy = useMemo(() => { const m = {}; for (const x of skipped) (m[x.c] ??= []).push(x); return m; }, [skipped]);
   const shown = comp ? groups.filter((g) => g.code === comp) : groups, flat = shown.flatMap((g) => g.picks);
   const todo = (list) => list.filter((x) => saved && !saved.has(pickId(x)) && open(x));
   // competitions open or closed: the choice of the user wins; otherwise only the first is open (all of a single one)
@@ -64,7 +66,7 @@ export default function Daily({ user, d }) {
           <Card.Header className="d-flex align-items-center gap-2 flex-wrap receipt-head" role="button" tabIndex={0} aria-expanded={isOpen(g)} onClick={() => toggle(g)} onKeyDown={(e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggle(g); } }}>
             <i className={`bi bi-chevron-${isOpen(g) ? "down" : "right"} text-body-secondary`} aria-hidden="true" />
             <LeagueLogo lg={d.byCode[g.code] ?? { id: g.id, name: g.name }} size={26} />
-            <div className="me-auto"><div className="fw-semibold">{g.name}</div><div className="tiny text-body-secondary">{g.country || "International"} · {g.picks.length} pick{g.picks.length > 1 ? "s" : ""}{saved && saved.size > 0 && <> · {g.picks.filter((x) => saved.has(pickId(x))).length} confirmed</>}{d.byCode[g.code]?.kind === "comp" && <Badge bg="warning" text="dark" className="ms-2" title="Cup or continental competition: strengths come only from this competition's own matches, so the minimum probability is higher and the estimate rougher">Rough model</Badge>}</div></div>
+            <div className="me-auto"><div className="fw-semibold">{g.name}</div><div className="tiny text-body-secondary">{g.country || "International"} · {g.picks.length} pick{g.picks.length > 1 ? "s" : ""}{noBy[g.code]?.length > 0 && <> · {noBy[g.code].length} without a pick</>}{saved && saved.size > 0 && <> · {g.picks.filter((x) => saved.has(pickId(x))).length} confirmed</>}{d.byCode[g.code]?.kind === "comp" && <Badge bg="warning" text="dark" className="ms-2" title="Cup or continental competition: strengths come only from this competition's own matches, so the minimum probability is higher and the estimate rougher">Rough model</Badge>}</div></div>
             <Button size="sm" variant="outline-secondary" onClick={(e) => { e.stopPropagation(); download(g.picks, g.code); }}><i className="bi bi-download me-1" />Download</Button>
             <Button size="sm" variant="outline-primary" disabled={busy || !todo(g.picks).length} onClick={(e) => { e.stopPropagation(); confirm(todo(g.picks)); }}><i className="bi bi-check2 me-1" />Confirm{todo(g.picks).length ? ` (${todo(g.picks).length})` : ""}</Button>
           </Card.Header>
@@ -84,6 +86,17 @@ export default function Daily({ user, d }) {
                 </div>
               </ListGroup.Item>);
           })}</ListGroup>}
+          {isOpen(g) && noBy[g.code]?.length > 0 && (
+            <div className="border-top">
+              <Button variant="link" size="sm" className="text-body-secondary text-decoration-none w-100 text-start px-3 py-2" aria-expanded={!!openNo[g.code]} onClick={() => setOpenNo((o) => ({ ...o, [g.code]: !o[g.code] }))}>
+                <i className={`bi bi-chevron-${openNo[g.code] ? "down" : "right"} me-2`} aria-hidden="true" />No pick ({noBy[g.code].length}): matches the model would not call
+              </Button>
+              {openNo[g.code] && <ListGroup variant="flush">{noBy[g.code].map((x) => (
+                <ListGroup.Item key={x.id} className="d-flex align-items-center gap-3 py-2 flex-wrap">
+                  <div className="flex-fill" style={{ minWidth: 180 }}><div className="fw-medium">{x.hn} vs {x.an}</div><div className="small text-body-secondary"><i className="bi bi-clock me-1" />{timeLabel(x.t)}</div></div>
+                  <div className="text-end small"><Badge bg="secondary" title={NO_PICK[x.w]?.[1]}>{NO_PICK[x.w]?.[0] ?? "No pick"}</Badge></div>
+                </ListGroup.Item>))}</ListGroup>}
+            </div>)}
         </Card>))}
       <p className="tiny text-body-secondary mb-0"><i className="bi bi-exclamation-triangle me-1" />Statistical estimates, not guarantees. The same model as the Analysis tab; a pick can differ slightly if you have loaded all-competition head-to-head there. 18+, bet responsibly.</p>
     </div>

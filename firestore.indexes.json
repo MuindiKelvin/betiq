@@ -67,6 +67,11 @@
       "indexes": []
     },
     {
+      "collectionGroup": "daily",
+      "fieldPath": "skipped",
+      "indexes": []
+    },
+    {
       "collectionGroup": "live",
       "fieldPath": "events",
       "indexes": []

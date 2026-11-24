@@ -34,7 +34,7 @@ const MARKETS_LABEL = (r) => `${MARKETS[r.m].sel[r.s]} ${Math.round(r.p * 100)}%
 const nowMs = Date.now(), nowSec = Math.floor(nowMs / 1000), cat = await store.get("catalog/main");
 if (!cat?.leagues?.length) { console.error("No catalog yet: run the data sync first (npm run sync:local)."); process.exit(1); }
 const untilSec = Date.parse(utcDay(nowMs + AHEAD * 864e5) + "T00:00:00Z") / 1000 + 86400;      // end of the last UTC day
-const fresh = []; let comps = 0, skipped = 0;
+const fresh = [], noPick = []; let comps = 0, skipped = 0;
 for (const l of cat.leagues) {
   if (!l.s?.at) continue;                                                                       // never synced
   if (WHY && !`${l.code} ${l.name}`.toLowerCase().includes(WHY)) continue;
@@ -44,7 +44,7 @@ for (const l of cat.leagues) {
     const [teams, ...seasons] = await Promise.all([store.get(`teams/${l.code}`), ...(meta.seasons ?? []).map((s, i) => store.get(`seasons/${l.code}_${s.id}`).then((d) => (d?.results ?? []).map((r) => ({ ...r, s: i }))))]);
     const results = seasons.flat().sort((a, b) => b.t - a.t);                                   // same list the app builds (loadResults)
     const why = [], rows = dayPicks({ code: l.code, comp: l, fixtures: fx.list, teams: teams?.list, results, nowSec, untilSec, why });
-    fresh.push(...rows);
+    fresh.push(...rows); noPick.push(...why.map((x) => ({ c: l.code, id: x.id, h: x.h, a: x.a, hn: x.hn, an: x.an, t: x.t, w: x.code })));
     if (WHY) {
       console.log(`\n${l.name} (${l.code}${l.kind === "comp" ? ", cup/continental: raised minimums" : ""}): ${rows.length} fixtures qualify, ${why.length} do not`);
       for (const x of [...rows.map((r) => ({ ...r, reason: `PICK ${MARKETS_LABEL(r)}` })), ...why].sort((a, b) => a.t - b.t)) console.log(`  ${new Date((x.t) * 1000).toISOString().slice(0, 16).replace("T", " ")} UTC  ${(x.hn + " vs " + x.an).padEnd(44)} ${x.reason}`);
@@ -56,10 +56,15 @@ if (WHY) process.exit(0);                                                       
 const kinds = Object.fromEntries(cat.leagues.map((l) => [l.code, l.kind])), byDay = new Map();
 for (let i = 0; i <= AHEAD; i++) byDay.set(utcDay(nowMs + i * 864e5), []);
 for (const x of fresh) byDay.get(utcDay(x.t * 1000))?.push(x);
+const noByDay = new Map([...byDay.keys()].map((d) => [d, []]));
+for (const x of noPick) noByDay.get(utcDay(x.t * 1000))?.push(x);
 const updated = new Date().toISOString(); let n = 0;
 for (const [day, list] of byDay) {
   const rows = mergeDay({ prev: (await store.get(`daily/${day}`))?.list, fresh: list, nowSec, cap: (c) => (kinds[c] === "comp" ? CAP_CUP : CAP) });
-  await store.set(`daily/${day}`, JSON.parse(JSON.stringify({ day, n: rows.length, list: rows, updated }))); n += rows.length;
+  // fixtures without a pick are stored too (with the reason), so the page can show a complete list; "cap" = qualified but cut by the per-competition limit
+  const kept = new Set(rows.map((x) => `${x.c}:${x.id}`)), cut = list.filter((x) => !kept.has(`${x.c}:${x.id}`)).map((x) => ({ c: x.c, id: x.id, h: x.h, a: x.a, hn: x.hn, an: x.an, t: x.t, w: "cap" }));
+  const none = [...noByDay.get(day), ...cut].sort((a, b) => a.t - b.t || a.id - b.id);
+  await store.set(`daily/${day}`, JSON.parse(JSON.stringify({ day, n: rows.length, list: rows, skipped: none, updated }))); n += rows.length;
 }
 const keep = utcDay(nowMs - 864e5);                                                             // yesterday stays (a local day can span two UTC days); older days go
 for (const id of await store.ids("daily")) if (id < keep) await store.del(`daily/${id}`);

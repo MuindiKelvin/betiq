@@ -8,6 +8,14 @@ import { TOP } from "./board.js";
 import { MARKETS, timeLabel, tzAt } from "./util.js";
 
 export const DAILY = { cap: 5, capCup: 10, ahead: 3, roughPlus: 0.05, min: { "1X2": 0.5, OU25: 0.6, BTTS: 0.6 } };   // cap / capCup: picks per league / per cup or continental competition per UTC day (a Champions League night has up to 18 matches); ahead: UTC days after today
+// Why a fixture has no pick (the `w` code stored in daily/<day>.skipped): [short label, longer explanation]
+export const NO_PICK = {
+  thin: ["Too little data", "One team has fewer than 8 matches in this competition's loaded seasons, so the model does not guess."],
+  low: ["Too close to call", "No result, goals or both-teams-to-score selection reaches the minimum probability."],
+  cap: ["Over the daily limit", "Qualified, but the competition already has its maximum number of picks for the day; stronger picks were kept."],
+  miss: ["Team data missing", "A team is missing from the competition's team list."],
+  err: ["Model could not run", "The model failed for this pairing."],
+};
 export const utcDay = (ms) => new Date(ms).toISOString().slice(0, 10);
 const rnd = (x, d) => Math.round(x * 10 ** d) / 10 ** d;
 
@@ -24,19 +32,20 @@ export function bestPick(p, min = DAILY.min) {
 // One competition: fixtures [{ id, h, a, t, s }], teams [{ id, name, ... }], results (every loaded season, as the app loads them).
 // Rows: { c, id, h, a, hn, an, t, m, s, p, x: [expected goals home, away] }. Skipped: fixtures that are not "not started" or whose kick-off is outside
 // (nowSec, untilSec], and pairs where either team has fewer than 8 matches of data. Cups and continental competitions use the raised minimums.
-// why (optional array): receives { id, hn, an, t, reason } for every in-window fixture that got no pick, so a missing match can be explained (npm run picks:why).
+// why (optional array): receives { id, h, a, hn, an, t, code, reason } for every in-window fixture that got no pick, so a missing match can be explained
+// (npm run picks:why, and the "No pick" list of the Daily Picks page). code: see NO_PICK.
 export function dayPicks({ code, comp, fixtures, teams, results, nowSec, untilSec, why }) {
   if (!results?.length) return [];
   const min = comp?.kind === "comp" ? Object.fromEntries(Object.entries(DAILY.min).map(([m, v]) => [m, v + DAILY.roughPlus])) : DAILY.min;
   const byId = Object.fromEntries((teams ?? []).map((t) => [t.id, t])), out = [];
   for (const f of fixtures ?? []) {
     if (f?.id == null || f.t == null || f.t <= nowSec || f.t > untilSec || (f.s ?? "notstarted") !== "notstarted") continue;
-    const H = byId[f.h], A = byId[f.a], skip = (reason) => why?.push({ id: f.id, hn: H?.name ?? `team ${f.h}`, an: A?.name ?? `team ${f.a}`, t: f.t, reason });
-    if (!H || !A) { skip("a team is missing from this competition's team list"); continue; }
-    let o; try { o = analyze({ results, H, A, byId, code, comp }); } catch (e) { skip("model error: " + e.message); continue; }
-    if (o.p.thin) { skip("too little data: one team has fewer than 8 matches in the loaded seasons"); continue; }
+    const H = byId[f.h], A = byId[f.a], skip = (code, reason) => why?.push({ id: f.id, h: f.h, a: f.a, hn: H?.name ?? `team ${f.h}`, an: A?.name ?? `team ${f.a}`, t: f.t, code, reason });
+    if (!H || !A) { skip("miss", "a team is missing from this competition's team list"); continue; }
+    let o; try { o = analyze({ results, H, A, byId, code, comp }); } catch (e) { skip("err", "model error: " + e.message); continue; }
+    if (o.p.thin) { skip("thin", "too little data: one team has fewer than 8 matches in the loaded seasons"); continue; }
     const b = bestPick(o.p, min);
-    if (!b && why) skip("no selection clears its minimum: " + Object.keys(min).map((m) => { const t = bestPick(o.p, { [m]: 0 }); return `${MARKETS[m].sel[t.s]} ${Math.round(t.p * 100)}% < ${Math.round(min[m] * 100)}%`; }).join(", "));
+    if (!b && why) skip("low", "no selection clears its minimum: " + Object.keys(min).map((m) => { const t = bestPick(o.p, { [m]: 0 }); return `${MARKETS[m].sel[t.s]} ${Math.round(t.p * 100)}% < ${Math.round(min[m] * 100)}%`; }).join(", "));
     if (b) out.push({ c: code, id: f.id, h: f.h, a: f.a, hn: H.name, an: A.name, t: f.t, m: b.m, s: b.s, p: rnd(b.p, 4), x: [rnd(o.p.lh, 2), rnd(o.p.la, 2)] });
   }
   return out;

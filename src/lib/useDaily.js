@@ -9,17 +9,18 @@ const TTL = 5 * 60e3, cache = new Map();
 function loadDay(day) {
   const c = cache.get(day);
   if (c && Date.now() - c.at < TTL) return c.p;
-  const p = getDoc(doc(db, "daily", day)).then((s) => (s.exists() ? s.data().list ?? [] : null));
+  const p = getDoc(doc(db, "daily", day)).then((s) => (s.exists() ? { list: s.data().list ?? [], skipped: s.data().skipped ?? [] } : null));
   cache.set(day, { at: Date.now(), p }); p.catch(() => cache.delete(day));
   return p;
 }
-// Picks whose match is played on the local day `day` (a day key). missing = none of the three documents exists (picks not built for those dates).
+// Picks (rows) and fixtures without a pick (skipped, each with a reason code) whose match is played on the local day `day` (a day key).
+// missing = none of the three documents exists (picks not built for those dates).
 export function useDaily(day) {
   const [st, setSt] = useState({ loading: true });
   useEffect(() => {
     let on = true;
     setSt({ loading: true });
-    Promise.all(utcDaysFor(day).map(loadDay)).then((docs) => on && setSt({ rows: docs.flatMap((l) => l ?? []).filter((x) => dayKey(x.t) === day), missing: docs.every((l) => l === null), loading: false }), (e) => on && setSt({ err: e.message, loading: false }));
+    Promise.all(utcDaysFor(day).map(loadDay)).then((docs) => on && setSt({ rows: docs.flatMap((d) => d?.list ?? []).filter((x) => dayKey(x.t) === day), skipped: docs.flatMap((d) => d?.skipped ?? []).filter((x) => dayKey(x.t) === day), missing: docs.every((d) => d === null), loading: false }), (e) => on && setSt({ err: e.message, loading: false }));
     return () => { on = false; };
   }, [day]);
   return st;
