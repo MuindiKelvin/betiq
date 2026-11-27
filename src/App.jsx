@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
+import { flushSync } from "react-dom";
 import { Alert, Button, Col, Container, Row } from "react-bootstrap";
 import { auth, provider } from "./lib/firebase";
 import { loadCatalog, loadTeamIndex } from "./lib/data";
@@ -25,6 +26,10 @@ import { GlobalSearch, HelpButton, MenuButton, MobileNav, SideNav, TABS } from "
 import { ToastProvider } from "./components/Toasts";
 import { ShortcutsProvider, useHotkeys } from "./components/Shortcuts";
 import { morph, visibleRow } from "./lib/vt";
+import { HOME, Trail, parentOf, routeKey } from "./lib/route";
+
+// history calls can throw in a sandboxed frame; the app then simply keeps working without the browser buttons
+const hist = (fn, ...a) => { try { window.history[fn](...a); } catch { /* no history control here */ } };
 
 const FEATURES = [
   ["arrow-left-right", "Head-to-head", "Every past meeting across five seasons, with goals, BTTS and over/under tendencies."],
@@ -90,11 +95,45 @@ function Main() {
     open: (m, from) => morph(() => { window.scrollTo({ top: 0 }); setView(m); }, { from }),
   };
   const closeMatch = () => morph(() => setView(null), { from: document.querySelector(".match-head"), to: () => visibleRow(view?.id) });
+  // The browser history mirrors the navigation state: every new page (tab, competition, team, player, match ...) is one history entry, so the phone's back and
+  // forward buttons, the back swipe and Alt+Left move through the pages instead of leaving the app. Switching tabs inside a competition replaces the entry.
+  const [token] = useState(() => Math.random().toString(36).slice(2)), trail = useRef(null), ready = !!(user && d);
+  const route = { tab, mode, comp, compTab, team, player, ent, view, pre }, routeRef = useRef(route), pageKey = routeKey(route);
+  routeRef.current = route;
+  useEffect(() => {
+    if (!ready) { trail.current = null; return; }                       // signed out: forget this session's entries
+    let t = trail.current;
+    if (!t) { t = trail.current = new Trail(); const id = t.start(route); hist("replaceState", { ...window.history.state, iq: token, id }, ""); return; }
+    if (pageKey === t.key) { t.update(route); return; }                  // same page (also: the browser button just moved here)
+    const id = t.push(route); hist("pushState", { iq: token, id }, "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, pageKey, compTab]);
+  useEffect(() => {                                                      // scroll position is reset by the app on every page change, not by the browser
+    if (!ready) return undefined;
+    let was; try { was = window.history.scrollRestoration; window.history.scrollRestoration = "manual"; } catch { return undefined; }
+    return () => { try { window.history.scrollRestoration = was; } catch { /* ignore */ } };
+  }, [ready]);
+  useEffect(() => {
+    const onPop = (e) => {                                               // the phone's back / forward button: show the page of that history entry
+      const t = trail.current;
+      if (!t) return;
+      const st = e.state, snap = (st && st.iq === token ? t.go(st.id) : t.go(-1)) ?? HOME;   // an entry of an earlier page load cannot be restored: start page
+      t.key = routeKey(snap);
+      const cur = routeRef.current, apply = () => { setTab(snap.tab); setMode(snap.mode); setComp(snap.comp); setCompTab(snap.compTab); setTeam(snap.team); setPlayer(snap.player); setEnt(snap.ent); setView(snap.view); setPre(snap.pre); };
+      setMenu(false);                                                    // the menu drawer never stays open over another page
+      if (cur.view && !snap.view) morph(apply, { from: document.querySelector(".match-head"), to: () => visibleRow(cur.view.id) });   // the same glide as the Back button
+      else { window.scrollTo({ top: 0 }); flushSync(apply); }   // one render for all nine fields, so no half-changed page is ever recorded
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [token]);
   // one step back, the same order the pages are stacked in: match > manager/referee/venue > player > team > competition. false = nothing to go back to
+  // When the browser's previous entry is that very page, this is the browser's back (so the history does not grow); otherwise the page is replaced by its parent.
   const back = () => {
-    if (view) closeMatch(); else if (ent) setEnt(null); else if (player) setPlayer(null); else if (team) setTeam(null);
-    else if (tab === "explore" && mode === "browse" && comp) setComp(null);
-    else return false;
+    const up = parentOf(route);
+    if (!up) return false;
+    if (trail.current?.backIs(up)) hist("back");
+    else if (view) closeMatch(); else if (ent) setEnt(null); else if (player) setPlayer(null); else if (team) setTeam(null); else setComp(null);
     return undefined;
   };
   const go = (k) => { if (k === "explore" && tab === "explore") { setComp(null); setMode("browse"); } clear(); setTab(k); };   // the sidebar entry of the current page returns to its start
@@ -107,7 +146,7 @@ function Main() {
     explore: (
       <Explore mode={mode} showSwitch={mode === "analyze" || !comp} onMode={(m) => { if (m === mode) return; clear(); if (m === "browse") setComp(null); setMode(m); }}>
         {mode === "analyze" ? <Analyze key={pre ? `${pre.h}-${pre.a}-${pre.league}` : "new"} user={user} d={{ ...d, compCode: comp }} pre={pre} />
-          : comp ? <Competition key={comp} d={d} code={comp} tab={compTab} setTab={setCompTab} nav={nav} onBack={() => setComp(null)} /> : <Competitions d={d} nav={nav} />}
+          : comp ? <Competition key={comp} d={d} code={comp} tab={compTab} setTab={setCompTab} nav={nav} onBack={back} /> : <Competitions d={d} nav={nav} />}
       </Explore>),
     live: <Live d={d} nav={nav} />,
     daily: <Daily user={user} d={d} />,
@@ -115,10 +154,10 @@ function Main() {
     help: <Help />,
   }[tab] ?? <Picks key={tab} user={user} d={d} nav={nav} history={tab === "history"} />);
   const Page = { manager: Manager, referee: Referee, venue: Venue }[ent?.kind];
-  const top = d && (view ? <MatchView key={view.id} m={view} d={d} user={user} onBack={closeMatch} nav={nav} />
-    : ent && Page ? <Page key={`${ent.kind}-${ent.id}`} ent={ent} d={d} nav={nav} onBack={() => setEnt(null)} />
-    : player ? <Player key={player.id} player={player} d={d} nav={nav} onBack={() => setPlayer(null)} />
-    : team ? <Team key={`${team.id}-${team.code}`} team={team} d={d} nav={nav} onBack={() => setTeam(null)} /> : page);
+  const top = d && (view ? <MatchView key={view.id} m={view} d={d} user={user} onBack={back} nav={nav} />
+    : ent && Page ? <Page key={`${ent.kind}-${ent.id}`} ent={ent} d={d} nav={nav} onBack={back} />
+    : player ? <Player key={player.id} player={player} d={d} nav={nav} onBack={back} />
+    : team ? <Team key={`${team.id}-${team.code}`} team={team} d={d} nav={nav} onBack={back} /> : page);
   const shell = { tab, onSelect: go, user, onSignOut: out };
 
   return (
