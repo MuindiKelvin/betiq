@@ -227,3 +227,31 @@ body { overflow-x: clip; }                                   /* safety net only:
 .comp-card.disabled { opacity: .5; }
 .team-menu .active-item { background: rgba(255,210,63,.12); }
 .comp-tabs .nav-link { color: var(--bs-secondary-color); } .comp-tabs .nav-link.active { color: #fff; }
+
+/* =====================  motion  =====================
+   Used where it shows what changed or answers a tap: opening a page or a receipt, a bar or chart point filling in, a download confirmed,
+   and a live match. Nothing loops except the live pulse. prefers-reduced-motion (above) shortens all of it to nothing. */
+@keyframes page-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.page-in { animation: page-in .28s cubic-bezier(.2, .7, .2, 1) both; }
+
+@keyframes expand-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.expand { animation: expand-in .22s ease-out both; }
+.chev { display: inline-block; transition: transform .2s ease; } .chev.open { transform: rotate(90deg); }
+
+/* bars grow from the left when they first appear (hit rates, market probabilities) */
+@keyframes grow-x { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.hit-bar > span, .mk-bar i { transform-origin: left center; animation: grow-x .7s cubic-bezier(.2, .7, .2, 1) both; }
+
+/* calibration chart: points pop in one after another (delay set per point); .pop is the same effect for a small icon */
+@keyframes dot-pop { from { transform: scale(0); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+.cal-dot { transform-box: fill-box; transform-origin: center; animation: dot-pop .45s cubic-bezier(.3, 1.5, .5, 1) both; }
+.pop { display: inline-block; animation: dot-pop .35s cubic-bezier(.3, 1.5, .5, 1) both; }
+
+/* buttons: a small press, and the existing colour transitions are kept */
+.btn { transition: color .15s ease-in-out, background-color .15s ease-in-out, border-color .15s ease-in-out, box-shadow .15s ease-in-out, transform .12s ease; }
+.btn:active:not(:disabled):not(.disabled) { transform: scale(.97); }
+.side-link:active { transform: scale(.98); }
+
+/* live: a soft ring that spreads from the badge while a match is in play */
+@keyframes live-pulse { 0% { box-shadow: 0 0 0 0 rgba(255, 93, 115, .55); } 70%, 100% { box-shadow: 0 0 0 .5rem rgba(255, 93, 115, 0); } }
+.live-pulse { animation: live-pulse 1.8s ease-out infinite; }

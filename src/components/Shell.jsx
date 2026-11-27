@@ -14,7 +14,7 @@ export function SideNav({ tab, onSelect, user, onSignOut }) {
     <div className="d-flex flex-column h-100">
       <div className="side-brand"><i className="bi bi-dribbble brand-ball" /><div><div className="brand">Bet<span>IQ</span></div><div className="tiny text-body-secondary">Analyze · Predict · Bet Smart</div></div></div>
       <nav className="px-3 py-3 d-flex flex-column gap-1 flex-fill">
-        {TABS.map(([k, l, i]) => <button key={k} type="button" className={"side-link" + (tab === k ? " active" : "")} onClick={() => onSelect(k)}><i className={`bi bi-${i}`} />{l}{k === "live" && liveCount > 0 && <span className="badge bg-danger ms-auto">{liveCount}</span>}</button>)}
+        {TABS.map(([k, l, i]) => <button key={k} type="button" className={"side-link" + (tab === k ? " active" : "")} onClick={() => onSelect(k)}><i className={`bi bi-${i}`} />{l}{k === "live" && liveCount > 0 && <span className="badge bg-danger live-pulse ms-auto">{liveCount}</span>}</button>)}
       </nav>
       <div className="side-user">
         {user.photoURL ? <img src={user.photoURL} alt="" width="40" height="40" className="rounded-circle" referrerPolicy="no-referrer" /> : <span className="avatar-fallback">{(user.displayName ?? "?")[0]}</span>}

@@ -6,7 +6,7 @@ import { loadPicks } from "../lib/picks";
 import { canEditPick, editPatch, pickWithLive } from "../lib/pickstate";
 import { minuteLabel, phaseOf } from "../lib/phase";
 import { useLive } from "../lib/useLive";
-import { MARKETS, dayLabel, pct, pickLabel, pickMarket } from "../lib/util";
+import { MARKETS, dayDMY, dayLabel, dmy, pct, pickLabel, pickMarket } from "../lib/util";
 import { buildReceipts, dayKey, downloadReceipt, money } from "../lib/receipts";
 import { RECENT_DAYS, groupFinished, groupKeys, holds } from "../lib/grouping";
 import { shiftDay } from "../lib/board";
@@ -69,7 +69,7 @@ function DayStrip({ list, onJump }) {
   return (
     <div className="d-flex flex-wrap gap-2" role="group" aria-label="Jump to a day">
       {list.slice(0, 14).map((r) => (
-        <Button key={r.key} size="sm" variant={"outline-" + tone(r)} className="day-chip" title={`${dayLabel(r.t)}: ${r.settled ? `${r.won} of ${r.settled} won` : "nothing settled"}`} onClick={() => onJump(r.key)}>
+        <Button key={r.key} size="sm" variant={"outline-" + tone(r)} className="day-chip" title={`${dayDMY(r.t)}: ${r.settled ? `${r.won} of ${r.settled} won` : "nothing settled"}`} onClick={() => onJump(r.key)}>
           <span>{shortDay(r.t)}</span><small>{r.settled ? `${r.won}/${r.settled}` : "–"}</small>
         </Button>))}
     </div>
@@ -78,19 +78,19 @@ function DayStrip({ list, onJump }) {
 
 // One match day. The header is a one-line summary that opens and closes the day; the picks (8 per page) are inside.
 function Receipt({ r, d, who, open, onToggle, renderPick }) {
-  const name = (c) => d.byCode[c]?.name ?? null, pg = usePaged(r.picks, 8, r.key), rate = r.settled ? r.won / r.settled : null;
+  const [saved, setSaved] = useState(false), name = (c) => d.byCode[c]?.name ?? null, pg = usePaged(r.picks, 8, r.key), rate = r.settled ? r.won / r.settled : null;
   const key = (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onToggle(); } };
   return (
     <Card id={"r-" + r.key}>
       <Card.Header className="d-flex align-items-center gap-2 flex-wrap receipt-head" role="button" tabIndex={0} aria-expanded={open} onClick={onToggle} onKeyDown={key}>
-        <i className={`bi bi-chevron-${open ? "down" : "right"} text-body-secondary`} aria-hidden="true" />
-        <div className="me-auto"><div className="fw-semibold">{dayLabel(r.t)}</div><div className="tiny text-body-secondary"><i className="bi bi-receipt me-1" />Receipt {r.id} · {r.picks.length} pick{r.picks.length > 1 ? "s" : ""}</div></div>
+        <i className={"bi bi-chevron-right chev text-body-secondary" + (open ? " open" : "")} aria-hidden="true" />
+        <div className="me-auto"><div className="fw-semibold">{dayDMY(r.t)}</div><div className="tiny text-body-secondary"><i className="bi bi-receipt me-1" />Receipt {r.id} · {r.picks.length} pick{r.picks.length > 1 ? "s" : ""}</div></div>
         {rate != null && <div className="d-flex align-items-center gap-2 small text-body-secondary" title={`${pct(rate)} hit rate`}>Won <strong className="text-body">{r.won}/{r.settled}</strong><div className="hit-bar"><span className={"bg-" + tone(r)} style={{ width: `${Math.round(rate * 100)}%` }} /></div></div>}
         {r.profit != null && <strong className={"small " + (r.profit >= 0 ? "text-success" : "text-danger")}>{money(r.profit)}</strong>}
         <Badge bg={r.open ? "warning" : "success"} text={r.open ? "dark" : undefined}>{r.open ? `Ongoing · ${r.openCount} pending` : "Finished"}</Badge>
-        <Button size="sm" variant="outline-secondary" onClick={(e) => { e.stopPropagation(); downloadReceipt(r, { leagueName: name, who }); }}><i className="bi bi-download me-1" />Download</Button>
+        <Button size="sm" variant="outline-secondary" onClick={(e) => { e.stopPropagation(); downloadReceipt(r, { leagueName: name, who }); setSaved(true); setTimeout(() => setSaved(false), 1800); }}><i className={"bi me-1 " + (saved ? "bi-check2 text-success pop" : "bi-download")} aria-hidden="true" />{saved ? "Downloaded" : "Download"}</Button>
       </Card.Header>
-      {open && <>
+      {open && <div className="expand">
         <ListGroup variant="flush">{pg.slice.map(renderPick)}</ListGroup>
         {pg.pages > 1 && <div className="py-2 border-top"><Pager page={pg.page} pages={pg.pages} onChange={pg.setPage} /></div>}
         <Card.Footer className="d-flex flex-wrap column-gap-4 row-gap-1 small text-body-secondary">
@@ -100,7 +100,7 @@ function Receipt({ r, d, who, open, onToggle, renderPick }) {
           {r.ret > 0 && <span>Potential return <strong className="text-body">{r.ret.toFixed(2)}</strong></span>}
           {r.profit != null && <span>Profit <strong className={r.profit >= 0 ? "text-success" : "text-danger"}>{money(r.profit)}</strong></span>}
         </Card.Footer>
-      </>}
+      </div>}
     </Card>
   );
 }
@@ -113,12 +113,12 @@ function Group({ g, open, onToggle, children }) {
   return (
     <Card id={g.key}>
       <Card.Header className="d-flex align-items-center gap-2 flex-wrap receipt-head" role="button" tabIndex={0} aria-expanded={open} onClick={onToggle} onKeyDown={key}>
-        <i className={`bi bi-chevron-${open ? "down" : "right"} text-body-secondary`} aria-hidden="true" />
+        <i className={"bi bi-chevron-right chev text-body-secondary" + (open ? " open" : "")} aria-hidden="true" />
         <div className="me-auto"><div className="fw-semibold"><i className={`bi bi-${LEVEL_ICON[g.level]} me-2 text-body-secondary`} />{g.level === "week" ? "Week " : ""}{g.label}</div><div className="tiny text-body-secondary">{s.days} day{s.days > 1 ? "s" : ""} · {s.picks} pick{s.picks > 1 ? "s" : ""}</div></div>
         {rate != null && <div className="d-flex align-items-center gap-2 small text-body-secondary" title={`${pct(rate)} hit rate`}>Won <strong className="text-body">{s.won}/{s.settled}</strong><div className="hit-bar"><span className={"bg-" + t} style={{ width: `${Math.round(rate * 100)}%` }} /></div></div>}
         {s.profit != null && <strong className={"small " + (s.profit >= 0 ? "text-success" : "text-danger")}>{money(s.profit)}</strong>}
       </Card.Header>
-      {open && <Card.Body className="d-flex flex-column gap-2 p-2 p-md-3">{children}</Card.Body>}
+      {open && <Card.Body className="expand d-flex flex-column gap-2 p-2 p-md-3">{children}</Card.Body>}
     </Card>
   );
 }
@@ -144,7 +144,7 @@ export default function Picks({ user, d, history, nav }) {
   // one receipt per match day: open ones (a pick still unsettled) are "Ongoing", the rest "Finished", each listed under its date
   const receipts = useMemo(() => buildReceipts(rows ?? []), [rows]);
   const pool = history ? receipts.filter((r) => !r.open && r.settled) : receipts;
-  const match = (r) => !q.trim() || r.picks.some((p) => hit(q, `${p.home} ${p.away} ${d.byCode[p.league]?.name ?? ""} ${pickLabel(p)} ${r.id} ${dayLabel(r.t)}`));
+  const match = (r) => !q.trim() || r.picks.some((p) => hit(q, `${p.home} ${p.away} ${d.byCode[p.league]?.name ?? ""} ${pickLabel(p)} ${r.id} ${dayLabel(r.t)} ${dmy(r.t)}`));
   const ongoing = pool.filter((r) => r.open && match(r)), finished = pool.filter((r) => !r.open && match(r));
   const pgO = usePaged(ongoing, 5, q + history + "o");
   // finished days: the last 7 days stay single days, older ones fold into weeks > months > years (a folded group is one line until opened)

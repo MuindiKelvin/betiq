@@ -1,4 +1,4 @@
-import { MARKETS, dateTimeLabel, dayLabel, pct, pickLabel, pickMarket } from "./util.js";
+import { MARKETS, dateTimeDMY, dayDMY, pct, pickLabel, pickMarket } from "./util.js";
 
 export const money = (x) => (x >= 0 ? "+" : "−") + Math.abs(x).toFixed(2);
 const two = (n) => String(n).padStart(2, "0");
@@ -69,13 +69,13 @@ export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.no
   y = 56; text("ANALYZE · PREDICT · BET SMART", { size: 6.5, col: "0.7 0.78 0.72" });
   y = 98; text(title, { x: W / 2, size: 13, bold: true, align: "center" });
   y += 13; text("No. " + r.id, { x: W / 2, size: 8.5, col: C.grey, align: "center" });
-  y += 12; text(dayLabel(r.t), { x: W / 2, size: 9, align: "center" });
+  y += 12; text(dayDMY(r.t), { x: W / 2, size: 9, align: "center" });
   y += 12; rect(r.open || badge ? C.amber : C.green, W / 2 - 62, y, 124, 18);
   y += 12.5; text(badge ?? (r.open ? `ONGOING · ${r.openCount} PENDING` : "FINISHED"), { x: W / 2, size: 8, bold: true, col: C.white, align: "center" });
   y += 17;
   if (r.open && !badge) { text("Picks settle automatically when matches end.", { x: W / 2, size: 6.5, col: C.grey, align: "center" }); y += 8; text("Download again later for the final result.", { x: W / 2, size: 6.5, col: C.grey, align: "center" }); y += 12; }
   if (who) { text("Player", { size: 8, col: C.grey }); text(wrap(who, 36, 1)[0], { x: W - M, size: 8, align: "right" }); y += 11; }
-  text("Printed", { size: 8, col: C.grey }); text(dateTimeLabel(now), { x: W - M, size: 8, align: "right" });
+  text("Printed", { size: 8, col: C.grey }); text(dateTimeDMY(now), { x: W - M, size: 8, align: "right" });
   y += 10; rule(true); y += 15;
 
   // picks
@@ -120,9 +120,13 @@ export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.no
   return pdf;   // ASCII only, so string length equals byte length
 }
 
+// File name with the match day as day-month-year: "betiq-receipt-25-11-2026.pdf" (daily picks: "betiq-receipt-daily-25-11-2026-L1.pdf").
+// "/" cannot be used in a file name, so the parts are joined with "-". The receipt key itself stays year-month-day so it sorts and groups correctly.
+export const receiptFile = (r) => `betiq-receipt-${r.key.replace(/(\d{4})-(\d{2})-(\d{2})/, "$3-$2-$1")}.pdf`;
+
 export function downloadReceipt(r, opts) {
   const url = URL.createObjectURL(new Blob([receiptPdf(r, opts)], { type: "application/pdf" }));
-  const a = Object.assign(document.createElement("a"), { href: url, download: `betiq-receipt-${r.key}.pdf` });
+  const a = Object.assign(document.createElement("a"), { href: url, download: receiptFile(r) });
   document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

@@ -120,7 +120,7 @@ export default function App() {
           {err && <Alert variant="danger">{err}</Alert>}
           {!d && !err && <Spin />}
           {d && !d.entries.length && <Alert variant="info">No data yet. Run <code>npm run sync:local</code> (see README).</Alert>}
-          {d && d.entries.length > 0 && top}
+          {d && d.entries.length > 0 && <div key={[tab, view?.id, ent && ent.kind + ent.id, player?.id, team && team.id + "-" + team.code].join("|")} className="page-in">{top}</div>}
           <p className="small text-body-secondary text-center mt-5 mb-0">
             {d?.updated && <>Catalog updated {dayLabel(Date.parse(d.updated) / 1000)} · </>}Data: Bzzoiro Sports Data (sports.bzzoiro.com) · Estimates only. 18+, bet responsibly.
           </p>

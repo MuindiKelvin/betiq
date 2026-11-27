@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Alert, Card, Col, Row, Table } from "react-bootstrap";
 import { loadPicks } from "../lib/picks";
-import { MIN_PICKS, calibrate, compare } from "../lib/calibration";
+import { MIN_PICKS, byMarket, calibrate, compare } from "../lib/calibration";
 import { pct } from "../lib/util";
 import { Spin, Stat } from "../components/ui";
 
@@ -22,8 +22,20 @@ function Chart({ bins }) {
       {[0, 0.5, 1].map((v) => <g key={v}><text x={X(v)} y={240} fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity=".7">{v * 100}%</text><text x={30} y={Y(v) + 3} fontSize="10" textAnchor="end" fill="currentColor" fillOpacity=".7">{v * 100}%</text></g>)}
       <text x={X(0.5)} y={256} fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity=".7">Stated probability</text>
       <text transform={`rotate(-90 8 ${Y(0.5)})`} x={8} y={Y(0.5)} fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity=".7">Actual hit rate</text>
-      {bins.filter((b) => b.n).map((b) => <circle key={b.lo} cx={X(b.avg)} cy={Y(b.hit)} r={4 + Math.min(6, Math.sqrt(b.n))} fill="var(--bs-primary)" fillOpacity=".85"><title>{`${Math.round(b.avg * 100)}% stated, ${Math.round(b.hit * 100)}% won (${b.n} picks)`}</title></circle>)}
+      {bins.filter((b) => b.n).map((b, i) => <circle key={b.lo} className="cal-dot" style={{ animationDelay: `${i * 90}ms` }} cx={X(b.avg)} cy={Y(b.hit)} r={4 + Math.min(6, Math.sqrt(b.n))} fill="var(--bs-primary)" fillOpacity=".85"><title>{`${Math.round(b.avg * 100)}% stated, ${Math.round(b.hit * 100)}% won (${b.n} picks)`}</title></circle>)}
     </svg>
+  );
+}
+
+// Hit rate per market: where the source is right more or less often than it says.
+function Markets({ rows, field }) {
+  const list = byMarket(rows, field);
+  if (list.length < 2) return null;
+  return (
+    <div className="table-responsive mt-3"><Table size="sm" className="mb-0">
+      <thead><tr><th>Market</th><th className="text-end">Picks</th><th className="text-end">Won</th><th className="text-end">Hit rate</th><th className="text-end">Avg stated</th></tr></thead>
+      <tbody>{list.map((m) => <tr key={m.key}><td>{m.label}</td><td className="text-end">{m.n}</td><td className="text-end">{m.won}</td><td className="text-end">{pct(m.hit)}</td><td className="text-end">{pct(m.avg)}</td></tr>)}</tbody>
+    </Table></div>
   );
 }
 
@@ -38,10 +50,11 @@ function Source({ rows, field, title, sub }) {
       <div className="d-flex align-items-baseline flex-wrap column-gap-2 mb-2"><h2 className="h5 mb-0">{title}</h2><span className="small text-body-secondary">{sub}</span></div>
       {c.n < MIN_PICKS ? <Alert variant="info" className="mb-0 py-2 small">{c.n} of {MIN_PICKS} settled picks so far. Scores appear after {MIN_PICKS}, because fewer are mostly noise.</Alert> : (<>
         <Row className="g-3 mb-3">
-          <Col xs={6} md={3}><Stat value={c.n} label="Picks scored" /></Col>
-          <Col xs={6} md={3}><Stat value={c.brier.toFixed(3)} label="Brier score" sub="0 perfect · 0.250 = always 50%" /></Col>
-          <Col xs={6} md={3}><Stat value={(c.ece * 100).toFixed(1)} label="Calibration error (pts)" sub="lower is better" /></Col>
-          <Col xs={6} md={3}><Stat value={pts(c.gap)} label="Confidence − hit rate" sub="+ means overconfident" /></Col>
+          <Col xs={6} md><Stat value={c.n} label="Picks scored" sub={`${c.won} won`} /></Col>
+          <Col xs={6} md><Stat value={pct(c.hit, 1)} label="Hit rate" sub={`95% range ${pct(c.ci[0])}–${pct(c.ci[1])}`} /></Col>
+          <Col xs={6} md><Stat value={c.brier.toFixed(3)} label="Brier score" sub="0 perfect · 0.250 = always 50%" /></Col>
+          <Col xs={6} md><Stat value={(c.ece * 100).toFixed(1)} label="Calibration error (pts)" sub="lower is better" /></Col>
+          <Col xs={6} md><Stat value={pts(c.gap)} label="Confidence − hit rate" sub="+ means overconfident" /></Col>
         </Row>
         <Alert variant={v[0]} className="py-2 small">{v[1]}</Alert>
         <Row className="g-3 align-items-center">
@@ -51,6 +64,7 @@ function Source({ rows, field, title, sub }) {
             <tbody>{c.bins.map((b) => <tr key={b.lo}><td>{Math.round(b.lo * 100)}–{Math.round(b.hi * 100)}%</td><td className="text-end">{b.n}</td><td className="text-end">{b.n ? pct(b.avg) : "–"}</td><td className="text-end">{b.n ? pct(b.hit) : "–"}</td></tr>)}</tbody>
           </Table></div></Col>
         </Row>
+        {field === "prob" && <Markets rows={rows} field={field} />}
       </>)}
     </Card.Body></Card>
   );

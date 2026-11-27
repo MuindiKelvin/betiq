@@ -7,6 +7,13 @@ export const tzAt = (t) => { try { return new Intl.DateTimeFormat(undefined, { t
 export const tzName = () => { try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ""; } catch { return ""; } };
 export const dateTimeLabel = (t) => `${dayLabel(t)} · ${timeLabel(t)}`;
 
+// Day/month/year, always in that order and always two-digit day and month: "25/11/2026". Local calendar day, like dayLabel.
+// Used by receipts (PDF text and file name). Weekday names are fixed English so a receipt reads the same on every device.
+const two = (n) => String(n).padStart(2, "0"), WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+export const dmy = (t, sep = "/") => { const x = new Date(t * 1000); return [two(x.getDate()), two(x.getMonth() + 1), x.getFullYear()].join(sep); };
+export const dayDMY = (t) => `${WEEKDAYS[new Date(t * 1000).getDay()]} ${dmy(t)}`;
+export const dateTimeDMY = (t) => `${dmy(t)} · ${timeLabel(t)}`;
+
 // Upcoming matches in date order: drops finished and long-overdue "not started" entries, keeps live, postponed and cancelled ones (shown with a badge)
 export const upcoming = (list, now = Date.now() / 1000) => list
   .filter((f) => f.t != null && f.s !== "finished" && (["postponed", "cancelled", "canceled", "inprogress"].includes(f.s) || f.t >= now - 3 * 3600))
