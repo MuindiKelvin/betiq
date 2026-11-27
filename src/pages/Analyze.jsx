@@ -9,6 +9,7 @@ import { phaseOf, preMatchLock } from "../lib/phase";
 import { useLive } from "../lib/useLive";
 import AnalysisView from "../components/AnalysisView";
 import CompSelect from "../components/CompSelect";
+import { useToast } from "../components/Toasts";
 import { Days, Load, Pager, SearchBox, Spin, TeamSelect, hit, usePaged } from "../components/ui";
 
 const pairKey = (x, y) => `${Math.min(x, y)}_${Math.max(x, y)}`;
@@ -32,7 +33,7 @@ function Fixtures({ fixtures, byId, onOpen }) {
 export default function Analyze({ user, d, pre }) {
   const [code, setCode] = useState(pre?.league ?? d.compCode ?? d.entries[0]?.code);
   const [h, setH] = useState(pre?.h ?? null), [a, setA] = useState(pre?.a ?? null);
-  const { doc: liveDoc, nowMs } = useLive();
+  const { doc: liveDoc, nowMs } = useLive(), toast = useToast();
   const [out, setOut] = useState(null), [h2hInfo, setH2h] = useState(null), [msg, setMsg] = useState(null), [busy, setBusy] = useState(false), [saved, setSaved] = useState(false);
   const s = useComp(code), comp = d.byCode[code];
   const byId = useMemo(() => { const m = { ...d.byId }; for (const t of s.data?.teams ?? []) m[t.id] = { ...t, league: code }; return m; }, [d.byId, s.data, code]);
@@ -67,7 +68,7 @@ export default function Analyze({ user, d, pre }) {
       const { H, A, fx } = out;
       await addDoc(collection(db, "users", user.uid, "picks"), { v: 3, matchId: fx?.id ?? null, kickoff: phase?.t ?? fx?.t ?? null, league: code, homeId: H.id, awayId: A.id, home: H.name, away: A.name,
         market: pick.market, selection: pick.selection, prob: pick.prob, odds: pick.odds, stake: pick.stake, myProb: pick.myProb ?? null, mktProb: pick.mktProb ?? null, createdAt: serverTimestamp() });
-      setSaved(true);
+      setSaved(true); toast.push({ text: "Saved to My Picks" });
     } catch (e) { setMsg({ type: "danger", text: "Could not save: " + e.message }); }
   }
   async function requestH2H() {
@@ -87,7 +88,7 @@ export default function Analyze({ user, d, pre }) {
       <p className="text-body-secondary mb-0">Choose a competition and two teams. BetIQ reads their form, head-to-head history and statistics, then estimates the result.</p>
       <Card className="picker"><Card.Body className="d-flex flex-column gap-3">
         <Row className="g-2"><Col xs={12} md={6} lg={4}><CompSelect entries={d.entries} value={code} onChange={changeComp} /></Col></Row>
-        {s.err ? <Alert variant="warning" className="mb-0">{s.err}</Alert> : !s.data ? <Spin /> : (
+        {s.err ? <Alert variant="warning" className="mb-0">{s.err}</Alert> : !s.data ? <Spin kind="inline" /> : (
           <Row className="g-2 align-items-end">
             <Col xs={12} md><TeamSelect label="Home team" teams={pool} value={h} disabledId={a} onChange={pickH} placeholder="Choose home team" /></Col>
             <Col xs="auto" className="d-none d-md-block pb-1"><Button variant="outline-secondary" aria-label="Swap teams" disabled={!h && !a} onClick={() => { setH(a); setA(h); }}><i className="bi bi-arrow-left-right" /></Button></Col>

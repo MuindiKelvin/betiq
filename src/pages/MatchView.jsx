@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { addDoc, collection, doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { Alert, Badge, Button, Card, Nav, Table } from "react-bootstrap";
+import { Alert, Badge, Button, Card, Table } from "react-bootstrap";
 import { auth, db } from "../lib/firebase";
 import { fresh, loadGoals, loadInfo, loadManagers, loadMatchStats, loadReferees, useComp, useLeague } from "../lib/data";
 import { byIdMap, cardsOf } from "../lib/people";
@@ -15,6 +15,9 @@ import DetailsView from "../components/DetailsView";
 import Scorers from "../components/Scorers";
 import Pitch from "../components/Pitch";
 import { Crest, LeagueLogo, Load, ProbBar } from "../components/ui";
+import { Num } from "../components/Motion";
+import { SlideNav } from "../components/SlideNav";
+import { useToast } from "../components/Toasts";
 
 const pairKey = (x, y) => `${Math.min(x, y)}_${Math.max(x, y)}`;
 const TABS = [["overview", "Overview", "grid"], ["lineups", "Lineups", "people"], ["stats", "Stats", "bar-chart-line"], ["h2h", "Head-to-head", "arrow-left-right"], ["analysis", "Analysis", "graph-up-arrow"]];
@@ -51,18 +54,18 @@ function Header({ r, H, A, entry, finished, info, code, nav }) {
   const note = [p && describe(p, fmt), extra.length ? `The score shown is after 90 minutes. ${extra.join(". ")}.` : ""].filter(Boolean).join(" ");
   const t = p?.t ?? r.t;
   return (
-    <Card><Card.Body>
+    <Card className="match-head"><Card.Body>
       <div className="d-flex align-items-center gap-2 small text-body-secondary mb-3">
         <LeagueLogo lg={entry} size={22} /><span>{entry?.name ?? r.league}{r.rn ? ` · ${r.rn}` : r.r ? ` · Round ${r.r}` : ""}{r.g ? ` · ${r.g}` : ""}</span>
         <span className="ms-auto text-end">{t != null && <>{dateTimeLabel(t)} <span className="tiny">({tzAt(t)})</span></>}{p?.moved && <Badge bg="warning" text="dark" className="ms-2" title="The kick-off time was changed (fixture change feed)">Rescheduled</Badge>}</span>
       </div>
       <div className="d-flex align-items-center justify-content-center gap-3 gap-md-5 text-center">
-        <div className="flex-fill d-flex flex-column align-items-center gap-2" style={{ minWidth: 0 }}><Crest team={H} size={64} /><div className="fw-semibold text-break">{H.name}</div></div>
+        <div className="flex-fill d-flex flex-column align-items-center gap-2" style={{ minWidth: 0 }}><span data-vt="home" className="d-inline-flex" style={{ viewTransitionName: "vt-h-crest" }}><Crest team={H} size={64} /></span><div className="fw-semibold text-break">{H.name}</div></div>
         <div style={{ minWidth: 110 }}>
-          {score ? <div className="display-5 fw-bold">{score[0] ?? "–"}–{score[1] ?? "–"}</div> : <div className="display-6 fw-bold">{t != null ? timeLabel(t) : ""}</div>}
+          {score ? <div className="display-5 fw-bold"><span data-vt="score" className="d-inline-block" style={{ viewTransitionName: "vt-score" }}><Num v={score[0]} />–<Num v={score[1]} /></span></div> : <div className="display-6 fw-bold">{t != null ? timeLabel(t) : ""}</div>}
           <div className="mt-1">{badge}</div>
         </div>
-        <div className="flex-fill d-flex flex-column align-items-center gap-2" style={{ minWidth: 0 }}><Crest team={A} size={64} /><div className="fw-semibold text-break">{A.name}</div></div>
+        <div className="flex-fill d-flex flex-column align-items-center gap-2" style={{ minWidth: 0 }}><span data-vt="away" className="d-inline-flex" style={{ viewTransitionName: "vt-a-crest" }}><Crest team={A} size={64} /></span><div className="fw-semibold text-break">{A.name}</div></div>
       </div>
       {note && <div className="small text-body-secondary text-center mt-3">{note}</div>}
       <InfoStrip info={info} code={code} nav={nav} />
@@ -100,7 +103,7 @@ function Inner({ lg, m, byId, code, comp, entry, user, nav }) {
   const r = { ...m, ...(played ?? {}) }, finished = r.hg != null, phase = usePhase(r);
   const [tab, setTab] = useState("overview"), [x, setX] = useState({ loading: true }), [mstats, setStats] = useState(null);
   const [goalsMap, setGoalsMap] = useState(null), [infoMap, setInfoMap] = useState(null), [refPack, setRefPack] = useState(null), [people, setPeople] = useState({}), [venue, setVenue] = useState(null);
-  const [h2hDoc, setH2hDoc] = useState(null), [h2hQ, setH2hQ] = useState({ queued: false, busy: false }), [saved, setSaved] = useState(false), [msg, setMsg] = useState(null);
+  const [h2hDoc, setH2hDoc] = useState(null), [h2hQ, setH2hQ] = useState({ queued: false, busy: false }), [saved, setSaved] = useState(false), [msg, setMsg] = useState(null), toast = useToast();
 
   // lineups, events, shot map, average positions and the full head-to-head history are stored by the data sync; users can queue a request for them
   useEffect(() => {
@@ -148,7 +151,7 @@ function Inner({ lg, m, byId, code, comp, entry, user, nav }) {
     if (lock) { setMsg(lock); return; }
     try {
       await addDoc(collection(db, "users", user.uid, "picks"), { v: 3, matchId: r.id ?? null, kickoff: phase?.t ?? r.t ?? null, league: code, homeId: H.id, awayId: A.id, home: H.name, away: A.name, market: pick.market, selection: pick.selection, prob: pick.prob, odds: pick.odds, stake: pick.stake, myProb: pick.myProb ?? null, mktProb: pick.mktProb ?? null, createdAt: serverTimestamp() });
-      setSaved(true);
+      setSaved(true); toast.push({ text: "Saved to My Picks" });
     } catch (e) { setMsg("Could not save: " + e.message); }
   }
 
@@ -203,12 +206,26 @@ function Inner({ lg, m, byId, code, comp, entry, user, nav }) {
   return (
     <>
       <Header r={r} H={H} A={A} entry={entry} finished={finished} info={info} code={code} nav={nav} />
-      <Nav className="nav-underline flex-nowrap overflow-auto comp-tabs" activeKey={tab} onSelect={setTab}>
-        {TABS.map(([k, l, i]) => <Nav.Item key={k}><Nav.Link eventKey={k} className="text-nowrap"><i className={`bi bi-${i} me-1`} />{l}</Nav.Link></Nav.Item>)}
-      </Nav>
+      <SlideNav items={TABS.map(([key, label, icon]) => ({ key, label, icon }))} activeKey={tab} onSelect={setTab} />
       {msg && <Alert variant="danger" className="mb-0">{msg}</Alert>}
       {body}
     </>
+  );
+}
+
+// Shown while the competition data loads: the crests (and the score, if the row had one) are already on the page, so the shared-element transition
+// from the list has something to land on; the real header takes over with the same layout.
+function HeaderStub({ H, A, m }) {
+  const score = m.hg != null && m.ag != null;
+  return (
+    <Card className="match-head"><Card.Body>
+      <div className="mb-3" style={{ height: 22 }} />
+      <div className="d-flex align-items-center justify-content-center gap-3 gap-md-5 text-center">
+        <div className="flex-fill d-flex flex-column align-items-center gap-2" style={{ minWidth: 0 }}><span data-vt="home" className="d-inline-flex" style={{ viewTransitionName: "vt-h-crest" }}><Crest team={H} size={64} /></span><div className="fw-semibold text-break">{H?.name}</div></div>
+        <div style={{ minWidth: 110 }}>{score ? <div className="display-5 fw-bold"><span data-vt="score" className="d-inline-block" style={{ viewTransitionName: "vt-score" }}>{m.hg}–{m.ag}</span></div> : <div className="display-6 fw-bold">{m.t != null ? timeLabel(m.t) : ""}</div>}</div>
+        <div className="flex-fill d-flex flex-column align-items-center gap-2" style={{ minWidth: 0 }}><span data-vt="away" className="d-inline-flex" style={{ viewTransitionName: "vt-a-crest" }}><Crest team={A} size={64} /></span><div className="fw-semibold text-break">{A?.name}</div></div>
+      </div>
+    </Card.Body></Card>
   );
 }
 
@@ -220,6 +237,7 @@ export default function MatchView({ m: m0, d, user, onBack, nav }) {
   return (
     <div className="d-flex flex-column gap-3">
       <div><Button size="sm" variant="outline-secondary" onClick={onBack}><i className="bi bi-arrow-left me-1" />Back</Button></div>
+      {!(s.data && c.data) && !(s.err ?? c.err) && <HeaderStub H={byId[m0.h]} A={byId[m0.a]} m={m0} />}
       <Load s={{ err: s.err ?? c.err, data: s.data && c.data ? s.data : null }}>{(lg) => <Inner lg={lg} m={m} byId={byId} code={code} comp={comp} entry={comp} user={user} nav={nav} />}</Load>
     </div>
   );

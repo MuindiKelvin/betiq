@@ -1,10 +1,11 @@
 import { useMemo, useState } from "react";
-import { Alert, Badge, Button, Card, Col, Nav, Row, Table } from "react-bootstrap";
+import { Alert, Badge, Button, Card, Col, Row, Table } from "react-bootstrap";
 import { fresh, loadManagers, loadSquad, loadTransfers, useComp, useDoc, useLeague } from "../lib/data";
 import { managerOfTeam } from "../lib/people";
 import { teamForm } from "../lib/model";
 import { ageOf, first, fmtVal } from "../lib/util";
 import DataTable from "../components/DataTable";
+import { SlideNav } from "../components/SlideNav";
 import { Crest, FormChips, Load, MatchList, PlayerPhoto, SearchBox, Spin, Stat, hit } from "../components/ui";
 
 const GROUPS = [["G", "Goalkeepers"], ["D", "Defenders"], ["M", "Midfielders"], ["F", "Forwards"]];
@@ -77,7 +78,7 @@ export default function Team({ team, d, nav, onBack }) {
             {facts.filter(([, v]) => v != null && v !== "").map(([k, v]) => <span key={k}><span className="text-body-secondary">{k}: </span>{fmtVal(k, v)}</span>)}</div></div>
         <FormChips r={(formRes?.form ?? String(st?.form ?? "").slice(-5).split("").filter((x) => "WDL".includes(x)))} />
       </Card.Body></Card>
-      <Nav className="nav-underline flex-nowrap overflow-auto comp-tabs" activeKey={tab} onSelect={setTab}>{tabs.map(([k, l]) => <Nav.Item key={k}><Nav.Link eventKey={k} className="text-nowrap">{l}</Nav.Link></Nav.Item>)}</Nav>
+      <SlideNav items={tabs.map(([key, label]) => ({ key, label }))} activeKey={tab} onSelect={setTab} />
       {tab === "overview" && (st ? (<>
         <Row className="g-3">{[["Played", st.n], ["W-D-L", `${st.w}-${st.d}-${st.l}`], ["Goals", `${st.gf}:${st.ga}`], ["Pts / game", st.ppm]].map(([l, v]) => <Col xs={6} md={3} key={l}><Card className="h-100"><Card.Body><Stat value={v ?? "–"} label={l} /></Card.Body></Card></Col>)}</Row>
         <Card><Card.Body><h2 className="h6 text-uppercase text-body-secondary ls mb-3">Per game, last {st.n} matches</h2>

@@ -5,6 +5,8 @@ import { fairOdds } from "../lib/model";
 import { selProb } from "../lib/analysis";
 import { assess, parseOdds, removeMargin } from "../lib/value";
 import { CompareRow, Crest, FormChips, Ring, Spark, Stat } from "./ui";
+import { Count } from "./Motion";
+import { stagger } from "../lib/motion";
 import Pitch from "./Pitch";
 import EventsFeed from "./EventsFeed";
 import MatchStatsView from "./MatchStatsView";
@@ -29,17 +31,17 @@ function Heat({ p, h, a, actual }) {
       <div className="tiny text-body-secondary mb-1">Scoreline probability (%) · rows: {h} goals · columns: {a} goals{actual && <> · <span className="text-primary">outlined = actual score</span></>}</div>
       <table className="heat"><thead><tr><th />{[0, 1, 2, 3, 4, 5].map((j) => <th key={j}>{j}</th>)}</tr></thead>
         <tbody>{p.matrix.map((row, i) => (
-          <tr key={i}><th>{i}</th>{row.map((v, j) => <td key={j} className={actual && actual.hg === i && actual.ag === j ? "actual" : undefined} style={{ background: `rgba(255,210,63,${(0.06 + 0.9 * (v / max)).toFixed(2)})`, color: v / max > 0.55 ? "#1a1500" : undefined }} title={`${i}–${j}: ${(v * 100).toFixed(1)}%`}>{v >= 0.01 ? Math.round(v * 100) : ""}</td>)}</tr>
+          <tr key={i}><th>{i}</th>{row.map((v, j) => <td key={j} className={actual && actual.hg === i && actual.ag === j ? "actual" : undefined} style={{ "--w": i + j, background: `rgba(255,210,63,${(0.06 + 0.9 * (v / max)).toFixed(2)})`, color: v / max > 0.55 ? "#1a1500" : undefined }} title={`${i}–${j}: ${(v * 100).toFixed(1)}%`}>{v >= 0.01 ? Math.round(v * 100) : ""}</td>)}</tr>
         ))}</tbody></table>
     </div>
   );
 }
 
 /* ---------- market lines with fair odds ---------- */
-function MarketRow({ label, v }) {
+function MarketRow({ label, v, i = 0 }) {
   const fo = fairOdds(v);
   return (
-    <div className="mk-row">
+    <div className="mk-row rise" style={stagger(i, 12)}>
       <div className="mk-label">{label}</div>
       <div className="mk-bar"><i style={{ width: v * 100 + "%" }} /></div>
       <div className="mk-pct">{pct(v)}</div>
@@ -94,7 +96,7 @@ function BetCard({ out, onSave, saved, locked }) {
         <Stat value={pct(mk.margin, 1)} label="Bookmaker margin" />
       </div>}
       {a && mk && (mk.margin < 0 || mk.margin > 0.3) && <div className="alert alert-warning py-2 small">The odds you entered imply a {pct(mk.margin, 1)} margin, which is unusual. Check them for typos.</div>}
-      {a && <div className={`alert alert-${TIER[a.tier][0]} py-2 small`}>
+      {a && <div className={`alert alert-${TIER[a.tier][0]} py-2 small` + (a.tier === "value" ? " value-glow" : "")}>
         {TIER[a.tier][1]}. Expected return per 1 staked: <strong>{a.ev >= 0 ? "+" : ""}{a.ev.toFixed(2)}</strong> (edge {a.edge >= 0 ? "+" : ""}{(a.edge * 100).toFixed(1)} pts vs the {mk ? "margin-free market" : "odds-implied"} probability).
         <div className="mt-1">{a.tier !== "value" ? <strong>No bet.</strong> : rough ? "Stake suggestion is off here: cup and continental predictions are too rough." : <>Suggested stake: <strong>{pct(a.stakeFrac, 1)}</strong> of bankroll{amount != null && <> (<strong>{amount}</strong>)</>}. <span className="text-body-secondary">Quarter-Kelly, capped at 5%.</span>{amount != null && <Button variant="link" size="sm" className="p-0 ms-2 align-baseline" onClick={() => setStake(String(amount))}>Use</Button>}</>}</div>
       </div>}
@@ -132,7 +134,7 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
       <div className="ring-row mb-3">
         <Ring value={p.home} color="#19d38a" label={`${H.name} win`} /><Ring value={p.draw} color="#94a3b8" label="Draw" /><Ring value={p.away} color="#4cc9f0" label={`${A.name} win`} />
       </div>
-      <div className="verdict-box"><i className="bi bi-lightbulb me-2 text-primary" />Model favours <strong>{lead ?? "a draw"}</strong> ({pct(Math.max(p.home, p.draw, p.away))}). Expected goals {p.lh.toFixed(1)}–{p.la.toFixed(1)}, most likely score {p.scores[0].h}–{p.scores[0].a}.</div>
+      <div className="verdict-box"><i className="bi bi-lightbulb me-2 text-primary" />Model favours <strong>{lead ?? "a draw"}</strong> (<Count value={Math.max(p.home, p.draw, p.away) * 100} suffix="%" />). Expected goals <Count value={p.lh} decimals={1} />–<Count value={p.la} decimals={1} />, most likely score {p.scores[0].h}–{p.scores[0].a}.</div>
       {ended && <div className={"alert py-2 small mt-3 mb-0 alert-" + (called ? "success" : "warning")}><i className={`bi bi-${called ? "check-circle" : "x-circle"} me-2`} />Actual result: <strong>{actualLabel}</strong>. The model {called ? "called it" : "missed it"}.</div>}
     </Panel>);
   const insights = (
@@ -203,20 +205,22 @@ export default function AnalysisView({ out, fx, byId, onSave, saved, ended, h2hI
         <Title icon="grid-3x3">Scoreline map</Title>
         <Row className="g-2 text-center mb-3">
           <Col xs={4}><Stat value={`${p.scores[0].h}–${p.scores[0].a}`} label="Most likely score" sub={pct(p.scores[0].p, 1)} /></Col>
-          <Col xs={4}><Stat value={`${p.lh.toFixed(1)}–${p.la.toFixed(1)}`} label="Expected goals" /></Col>
-          <Col xs={4}><Stat value={(p.lh + p.la).toFixed(1)} label="Expected total" /></Col>
+          <Col xs={4}><Stat value={<><Count value={p.lh} decimals={1} />–<Count value={p.la} decimals={1} /></>} label="Expected goals" /></Col>
+          <Col xs={4}><Stat value={<Count value={p.lh + p.la} decimals={1} />} label="Expected total" /></Col>
         </Row>
         <Heat p={p} h={H.name} a={A.name} actual={ended} />
       </Card.Body></Card></Col>
       <Col xs={12} lg={6}><Card className="h-100"><Card.Body>
         <Title icon="list-check">Markets</Title>
         <div className="mk-head"><span /><span /><span>Prob.</span><span title="Fair decimal odds">Fair odds</span></div>
-        <MarketRow label={`${H.name} win`} v={p.home} /><MarketRow label="Draw" v={p.draw} /><MarketRow label={`${A.name} win`} v={p.away} />
-        <hr className="my-2" />
-        <MarketRow label={`${H.name} or draw`} v={p.home + p.draw} /><MarketRow label={`${A.name} or draw`} v={p.away + p.draw} /><MarketRow label="Either team wins" v={p.home + p.away} />
-        <hr className="my-2" />
-        <MarketRow label="Over 1.5 goals" v={p.over15} /><MarketRow label="Over 2.5 goals" v={p.over25} /><MarketRow label="Over 3.5 goals" v={p.over35} />
-        <MarketRow label="Both teams score" v={p.btts} /><MarketRow label={`${H.name} clean sheet`} v={p.homeCS} /><MarketRow label={`${A.name} clean sheet`} v={p.awayCS} />
+        {(() => { let k = 0; const R = (label, v) => <MarketRow label={label} v={v} i={k++} />; return (<>   {/* each row rises a little after the one above */}
+          {R(`${H.name} win`, p.home)}{R("Draw", p.draw)}{R(`${A.name} win`, p.away)}
+          <hr className="my-2" />
+          {R(`${H.name} or draw`, p.home + p.draw)}{R(`${A.name} or draw`, p.away + p.draw)}{R("Either team wins", p.home + p.away)}
+          <hr className="my-2" />
+          {R("Over 1.5 goals", p.over15)}{R("Over 2.5 goals", p.over25)}{R("Over 3.5 goals", p.over35)}
+          {R("Both teams score", p.btts)}{R(`${H.name} clean sheet`, p.homeCS)}{R(`${A.name} clean sheet`, p.awayCS)}
+        </>); })()}
       </Card.Body></Card></Col>
 
       {/* why the model says this */}

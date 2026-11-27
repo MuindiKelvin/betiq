@@ -68,11 +68,19 @@ function PitchSvg({ tall, label, children }) {
     </svg>
   );
 }
-const Dot = ({ x, y, color, num, name, r = 3.1 }) => (
-  <g><title>{name}</title><circle cx={x} cy={y} r={r} fill={color} stroke="#fff" strokeWidth=".3" />
-    {num != null && <text x={x} y={y + 1.1} textAnchor="middle" fontSize="3" fontWeight="700" fill="#fff">{num}</text>}
-    <text x={x} y={y + r + 3} textAnchor="middle" fontSize="2.3" fill="#fff" stroke="rgba(0,0,0,.55)" strokeWidth=".5" paintOrder="stroke">{surname(name)}</text></g>
+// A player dot. The outer group carries the position as a CSS transform, so a dot that stays on screen when the view changes (same key) glides to its new spot;
+// the inner group pops in when the dot is new (staggered by i).
+const Dot = ({ x, y, color, num, name, i = 0, r = 3.1 }) => (
+  <g className="pdot" style={{ transform: `translate(${x}px, ${y}px)` }}>
+    <g className="pop-in" style={{ "--i": Math.min(i, 24) }}>
+      <title>{name}</title><circle cx="0" cy="0" r={r} fill={color} stroke="#fff" strokeWidth=".3" />
+      {num != null && <text x="0" y="1.1" textAnchor="middle" fontSize="3" fontWeight="700" fill="#fff">{num}</text>}
+      <text x="0" y={r + 3} textAnchor="middle" fontSize="2.3" fill="#fff" stroke="rgba(0,0,0,.55)" strokeWidth=".5" paintOrder="stroke">{surname(name)}</text>
+    </g>
+  </g>
 );
+// Same player = same key in the formation and average-position views (side + name, numbered when a name repeats).
+const dotKeys = (k, names) => { const seen = {}; return names.map((n, i) => { const base = `${k}:${n || "#" + i}`; seen[base] = (seen[base] ?? 0) + 1; return seen[base] > 1 ? `${base}~${seen[base]}` : base; }); };
 
 export default function Pitch({ lineups, details, h, a }) {
   const tall = useNarrow();
@@ -87,13 +95,12 @@ export default function Pitch({ lineups, details, h, a }) {
     <div>
       {views.length > 1 && <div className="btn-group btn-group-sm mb-2 flex-wrap" role="group">{views.map(([k, l]) => <button key={k} type="button" className={"btn " + (view === k ? "btn-primary" : "btn-outline-secondary")} onClick={() => setPick(k)}>{l}</button>)}</div>}
       <PitchSvg tall={tall} label={note}>
-        {view === "form" && [["h", lineups?.h, (x, y) => [2 + x * 50, y * 68]], ["a", lineups?.a, (x, y) => [103 - x * 50, (1 - y) * 68]]].map(([k, sheet, map]) => layoutSide(sheet).map(({ p, x, y }, i) => {
-          const [px, py] = T(...map(x, y)); return <Dot key={k + i} x={px} y={py} color={COL[k]} num={p.num} name={p.n ?? ""} />;
-        }))}
-        {view === "avg" && [["h", placeAvg(avg?.h, true)], ["a", placeAvg(avg?.a, false)]].map(([k, list]) => list.map((p, i) => { const [px, py] = T(p.px, p.py); return <Dot key={k + i} x={px} y={py} color={COL[k]} name={p.n ?? ""} />; }))}
+        {view === "form" ? [["h", lineups?.h, (x, y) => [2 + x * 50, y * 68]], ["a", lineups?.a, (x, y) => [103 - x * 50, (1 - y) * 68]]].map(([k, sheet, map]) => ((side) => { const keys = dotKeys(k, side.map(({ p }) => p.n)); return side.map(({ p, x, y }, i) => {
+          const [px, py] = T(...map(x, y)); return <Dot key={keys[i]} i={i} x={px} y={py} color={COL[k]} num={p.num} name={p.n ?? ""} />;
+        }); })(layoutSide(sheet))) : view === "avg" ? [["h", placeAvg(avg?.h, true)], ["a", placeAvg(avg?.a, false)]].map(([k, list]) => ((keys) => list.map((p, i) => { const [px, py] = T(p.px, p.py); return <Dot key={keys[i]} i={i} x={px} y={py} color={COL[k]} name={p.n ?? ""} />; }))(dotKeys(k, list.map((p) => p.n)))) : null}   {/* one slot for both views, so a player who is in both keeps their element and glides */}
         {view === "shots" && [["h", placeShots(shots.filter((x) => x.h), true)], ["a", placeShots(shots.filter((x) => !x.h), false)]].map(([k, list]) => list.map((sh, i) => {
           const [px, py] = T(sh.px, sh.py), goal = sh.k === "goal", r = Math.min(3.8, Math.max(1.2, 1.2 + (sh.xg ?? 0.08) * 7));
-          return <g key={k + i}><title>{`${sh.m ?? "?"}' ${sh.k ?? "shot"}${sh.xg != null ? ` · xG ${sh.xg}` : ""}`}</title><circle cx={px} cy={py} r={r} fill={COL[k]} fillOpacity={goal ? 0.95 : 0.55} stroke={goal ? "#fff" : COL[k]} strokeWidth={goal ? 0.6 : 0.25} /></g>;
+          return <g key={"s" + k + i} className="pop-in" style={{ "--i": Math.min(i, 30) }}><title>{`${sh.m ?? "?"}' ${sh.k ?? "shot"}${sh.xg != null ? ` · xG ${sh.xg}` : ""}`}</title><circle cx={px} cy={py} r={r} fill={COL[k]} fillOpacity={goal ? 0.95 : 0.55} stroke={goal ? "#fff" : COL[k]} strokeWidth={goal ? 0.6 : 0.25} /></g>;
         }))}
       </PitchSvg>
       <div className="d-flex justify-content-between small mt-2">

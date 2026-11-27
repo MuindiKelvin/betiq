@@ -51,16 +51,19 @@ const wrap = (s, n, max = 2) => {
 
 const C = { dark: "0.04 0.15 0.09", gold: "1 0.82 0.25", ink: "0.1 0.1 0.1", grey: "0.45 0.45 0.45", green: "0.08 0.55 0.28", red: "0.8 0.15 0.2", amber: "0.75 0.5 0", white: "1 1 1" };
 
+// The receipt as drawing instructions, in top-down coordinates (y grows downwards): { W, H, items }. The PDF and the on-screen preview are both drawn from this
+// one list, so the preview shows exactly what the downloaded file contains.
+//   { k: "rect", col, x, top, w, h } | { k: "text", t, size, bold, col, left, base } | { k: "rule", dash, at, x1, x2 }     (col: PDF colour, "r g b" in 0..1)
 // title / badge: optional header texts (daily picks use "DAILY PICKS" and "MODEL PICKS · n"); a pick's `note` replaces its status line.
-export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.now() / 1000, title = "PICK RECEIPT", badge = null } = {}) {
-  const W = 300, M = 18, IN = W - 2 * M, ops = [], f2 = (v) => +v.toFixed(2);
+export function layoutReceipt(r, { leagueName = () => null, who = "", now = Date.now() / 1000, title = "PICK RECEIPT", badge = null } = {}) {
+  const W = 300, M = 18, items = [];
   let y = 0;
-  const rect = (col, x, top, w, h) => ops.push((H) => `${col} rg ${f2(x)} ${f2(H - top - h)} ${f2(w)} ${f2(h)} re f`);
+  const rect = (col, x, top, w, h) => items.push({ k: "rect", col, x, top, w, h });
   const text = (s, { x = M, size = 8, bold = false, col = C.ink, align = "left" } = {}) => {
-    const t = clean(s), w = t.length * 0.6 * size, left = align === "right" ? x - w : align === "center" ? x - w / 2 : x, base = y;
-    ops.push((H) => `BT /${bold ? "F2" : "F1"} ${size} Tf ${col} rg ${f2(left)} ${f2(H - base)} Td (${esc(t)}) Tj ET`);
+    const t = clean(s), w = t.length * 0.6 * size, left = align === "right" ? x - w : align === "center" ? x - w / 2 : x;
+    items.push({ k: "text", t, size, bold, col, left, base: y });
   };
-  const rule = (dash) => { const at = y; ops.push((H) => `${dash ? "[2 2] 0 d" : "[] 0 d"} 0.5 w 0.6 G ${M} ${f2(H - at)} m ${W - M} ${f2(H - at)} l S [] 0 d`); };
+  const rule = (dash) => items.push({ k: "rule", dash, at: y, x1: M, x2: W - M });
   const row = (l, v, o = {}) => { text(l, { size: 8.5, col: C.grey }); text(v, { x: W - M, size: 8.5, bold: true, align: "right", ...o }); y += 12; };
 
   // header band
@@ -107,8 +110,16 @@ export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.no
   y += 16; text("Estimates only. 18+, bet responsibly.", { x: W / 2, size: 6.5, col: C.grey, align: "center" });
   y += 9; text("Data: Bzzoiro Sports Data", { x: W / 2, size: 6.5, col: C.grey, align: "center" });
   y += 18;
+  return { W, H: Math.ceil(y), items };
+}
 
-  const H = Math.ceil(y), body = ops.map((o) => o(H)).join("\n");
+// PDF page content for one drawing item (PDF y grows upwards, so every y is turned round with the page height H)
+const pdfOp = (it, H, f2) => it.k === "rect" ? `${it.col} rg ${f2(it.x)} ${f2(H - it.top - it.h)} ${f2(it.w)} ${f2(it.h)} re f`
+  : it.k === "text" ? `BT /${it.bold ? "F2" : "F1"} ${it.size} Tf ${it.col} rg ${f2(it.left)} ${f2(H - it.base)} Td (${esc(it.t)}) Tj ET`
+  : `${it.dash ? "[2 2] 0 d" : "[] 0 d"} 0.5 w 0.6 G ${it.x1} ${f2(H - it.at)} m ${it.x2} ${f2(H - it.at)} l S [] 0 d`;
+
+export function receiptPdf(r, opts = {}) {
+  const { W, H, items } = layoutReceipt(r, opts), f2 = (v) => +v.toFixed(2), body = items.map((it) => pdfOp(it, H, f2)).join("\n");
   const objs = ["<< /Type /Catalog /Pages 2 0 R >>", "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
     `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Contents 4 0 R /Resources << /Font << /F1 5 0 R /F2 6 0 R >> >> >>`,
     `<< /Length ${body.length} >>\nstream\n${body}\nendstream`,
@@ -118,6 +129,14 @@ export function receiptPdf(r, { leagueName = () => null, who = "", now = Date.no
   const xref = pdf.length;
   pdf += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${off.map((n) => String(n).padStart(10, "0") + " 00000 n \n").join("")}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
   return pdf;   // ASCII only, so string length equals byte length
+}
+
+// The same drawing as SVG elements for the on-screen preview: [{ tag: "rect" | "text" | "line", props, text? }] inside viewBox "0 0 W H" (y downwards, as laid out).
+const rgb = (col) => "rgb(" + col.split(" ").map((v) => Math.round(parseFloat(v) * 255)).join(",") + ")";
+export function receiptSvgParts({ items }) {
+  return items.map((it) => it.k === "rect" ? { tag: "rect", props: { x: it.x, y: it.top, width: it.w, height: it.h, fill: rgb(it.col) } }
+    : it.k === "text" ? { tag: "text", text: it.t, props: { x: it.left, y: it.base, fontSize: it.size, fontWeight: it.bold ? 700 : 400, fill: rgb(it.col), textLength: it.t.length ? +(it.t.length * 0.6 * it.size).toFixed(2) : undefined, lengthAdjust: "spacing" } }
+    : { tag: "line", props: { x1: it.x1, x2: it.x2, y1: it.at, y2: it.at, stroke: "rgb(153,153,153)", strokeWidth: 0.5, strokeDasharray: it.dash ? "2 2" : undefined } });
 }
 
 // File name with the match day as day-month-year: "betiq-receipt-25-11-2026.pdf" (daily picks: "betiq-receipt-daily-25-11-2026-L1.pdf").

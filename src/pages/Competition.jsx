@@ -1,8 +1,9 @@
 import { useMemo } from "react";
-import { Alert, Button, Nav } from "react-bootstrap";
+import { Alert, Button } from "react-bootstrap";
 import { useComp } from "../lib/data";
 import { dateTimeLabel } from "../lib/util";
 import { LeagueLogo, Load } from "../components/ui";
+import { SlideNav } from "../components/SlideNav";
 import { ManagersTab, MatchesTab, OverviewTab, PlayersTab, RefereesTab, TableTab, TeamsTab, TransfersTab } from "./CompTabs";
 
 const TABS = [["overview", "Overview", "grid"], ["matches", "Matches", "calendar3"], ["table", "Table", "list-ol"], ["teams", "Teams", "shield"], ["players", "Players", "person-lines-fill"], ["managers", "Managers", "clipboard2-data"], ["referees", "Referees", "person-badge"], ["transfers", "Transfers", "arrow-left-right"]];
@@ -19,9 +20,7 @@ export default function Competition({ d, code, tab, setTab, nav, onBack }) {
         <div className="me-auto"><h1 className="h3 mb-0">{entry?.name ?? code}</h1><div className="text-body-secondary small">{entry?.country || "International"}{season ? ` · ${season.name ?? season.year}` : ""}{c.data?.meta?.updated ? ` · updated ${dateTimeLabel(Date.parse(c.data.meta.updated) / 1000)}` : ""}</div></div>
         <Button variant="primary" onClick={() => nav.analyze({ league: code })}><i className="bi bi-lightning-charge-fill me-1" />Analyze a match</Button>
       </div>
-      <Nav className="nav-underline flex-nowrap overflow-auto comp-tabs" activeKey={tab} onSelect={setTab}>
-        {TABS.map(([k, l, i]) => <Nav.Item key={k}><Nav.Link eventKey={k} className="text-nowrap"><i className={`bi bi-${i} me-1`} />{l}</Nav.Link></Nav.Item>)}
-      </Nav>
+      <SlideNav items={TABS.map(([key, label, icon]) => ({ key, label, icon }))} activeKey={tab} onSelect={setTab} />
       <Load s={c}>{(comp) => {
         const p = { code, comp: { ...comp, kind: entry?.kind ?? "league" }, byId, nav };
         // Matches/Table tabs read comp.kind through comp.meta; keep both shapes consistent

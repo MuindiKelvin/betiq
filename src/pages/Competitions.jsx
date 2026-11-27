@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Alert, Badge, Button, Card, Col, Form, Row } from "react-bootstrap";
 import { TOP } from "../lib/board";
+import { stagger } from "../lib/motion";
 import { LeagueLogo, Pager, SearchBox, hit, usePaged } from "../components/ui";
 
 // Browse every competition the data source covers. Competitions that have been synced open; the rest are listed as "loading".
@@ -21,11 +22,12 @@ export default function Competitions({ d, nav }) {
       </div>
       {!list.length && <Alert variant="info" className="mb-0">{synced ? "No competition matches your filters." : "No competition has been loaded yet. Run the data sync (see README)."}</Alert>}
       <Row className="g-3">
-        {pg.slice.map((l) => {
+        {pg.slice.map((l, n) => {
           const ready = !!l.s?.at && (l.s.results || l.s.fixtures);
           return (
             <Col xs={12} sm={6} xl={4} key={l.code}>
-              <Card className={"h-100 comp-card" + (ready ? "" : " disabled")} role={ready ? "button" : undefined} onClick={ready ? () => nav.comp(l.code) : undefined}>
+              <Card className={"h-100 comp-card rise" + (ready ? "" : " disabled")} style={stagger(n, 12)} role={ready ? "button" : undefined} tabIndex={ready ? 0 : undefined} onClick={ready ? () => nav.comp(l.code) : undefined}
+                onKeyDown={ready ? (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); nav.comp(l.code); } } : undefined}>
                 <Card.Body className="d-flex align-items-center gap-3">
                   <LeagueLogo lg={l} size={48} />
                   <div className="flex-fill" style={{ minWidth: 0 }}>

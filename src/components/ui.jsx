@@ -1,10 +1,13 @@
 import { usePhase } from "../lib/useLive";
 import PhaseMid from "./PhaseMid";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Button, Form as BSForm, InputGroup, Pagination, Spinner } from "react-bootstrap";
+import { Badge, Button, Form as BSForm, InputGroup, Pagination } from "react-bootstrap";
 import { dayLabel, groupByDay, timeLabel } from "../lib/util";
+import { useEntered } from "../lib/motion";
+import { Count } from "./Motion";
+import { Spin } from "./Skeleton";
 
-export const Spin = () => <div className="text-center py-5"><Spinner animation="border" variant="primary" role="status"><span className="visually-hidden">Loading</span></Spinner></div>;
+export { Spin };   // skeleton placeholders (components/Skeleton.jsx); the name is kept so every caller still works
 export const Load = ({ s, children }) => (s.err ? <div className="alert alert-danger">{s.err}</div> : s.data ? children(s.data) : <Spin />);
 
 const hue = (s) => [...String(s)].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 360, 7);
@@ -13,11 +16,11 @@ export const IMG = "https://sports.bzzoiro.com/img";
 // BSD image API (free, for identifying teams/leagues/players inside the app). Falls back to initials when an image is missing.
 // size: pixels (number) or any CSS length such as "clamp(52px, 17vw, 84px)" for crests that must shrink on small screens
 function Img({ kind, id, name, size, round }) {
-  const [bad, setBad] = useState(false);
-  useEffect(() => setBad(false), [id]);
+  const [bad, setBad] = useState(false), [loaded, setLoaded] = useState(false), ref = useRef(null);
+  useEffect(() => { setBad(false); const im = ref.current; setLoaded(!!(im && im.complete && im.naturalWidth > 0)); }, [id]);   // a cached image is already there: no fade
   const px = typeof size === "number" ? `${size}px` : size, box = { width: px, height: px };
   if (id == null || bad) return <span className="crest-fallback" style={{ ...box, fontSize: `calc(${px} * 0.38)`, background: `hsl(${hue(id ?? name)} 45% 28%)`, borderRadius: round ? "50%" : undefined }}>{initials(name)}</span>;
-  return <img className="crest" src={`${IMG}/${kind}/${id}/`} alt="" style={{ ...box, borderRadius: round ? "50%" : undefined, objectFit: round ? "cover" : "contain" }} loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} />;
+  return <img ref={ref} className={"crest crest-img" + (loaded ? " loaded" : "")} onLoad={() => setLoaded(true)} src={`${IMG}/${kind}/${id}/`} alt="" style={{ ...box, borderRadius: round ? "50%" : undefined, objectFit: round ? "cover" : "contain" }} loading="lazy" referrerPolicy="no-referrer" onError={() => setBad(true)} />;
 }
 export const Crest = ({ team, size = 28 }) => <Img kind="team" id={team?.id} name={team?.name} size={size} />;
 export const LeagueLogo = ({ lg, size = 36 }) => <Img kind="league" id={lg?.id} name={lg?.name} size={size} />;
@@ -29,7 +32,7 @@ const CHIP = { W: "success", D: "secondary", L: "danger" };
 export const FormChips = ({ r = [], size = 26 }) => (
   <div className="d-flex flex-wrap gap-1 align-items-center">
     {!r.length && <span className="text-body-secondary small">No data</span>}
-    {r.map((x, i) => <Badge key={i} pill bg={CHIP[x]} className="d-inline-flex align-items-center justify-content-center" style={{ width: size, height: size }}>{x}</Badge>)}
+    {r.map((x, i) => <Badge key={i} pill bg={CHIP[x]} className="d-inline-flex align-items-center justify-content-center pop" style={{ width: size, height: size, animationDelay: `${Math.min(i, 6) * 60}ms` }}>{x}</Badge>)}
   </div>
 );
 
@@ -72,10 +75,10 @@ export function TeamSelect({ label, teams, value, onChange, disabledId, placehol
 
 // Three-segment probability bar (home / draw / away)
 export function ProbBar({ p, h, a, height = 34 }) {
-  const seg = [[p.home, "seg-home", h], [p.draw, "seg-draw", "Draw"], [p.away, "seg-away", a]];
+  const seg = [[p.home, "seg-home", h], [p.draw, "seg-draw", "Draw"], [p.away, "seg-away", a]], on = useEntered();   // the segments grow from 0 on first draw
   return (
     <div className="prob-bar" style={{ height }}>
-      {seg.map(([v, c, l]) => <div key={c} className={c} style={{ width: v * 100 + "%" }} title={`${l} ${(v * 100).toFixed(0)}%`}><span>{v >= 0.09 ? Math.round(v * 100) + "%" : ""}</span></div>)}
+      {seg.map(([v, c, l]) => <div key={c} className={c} style={{ width: (on ? v * 100 : 0) + "%" }} title={`${l} ${(v * 100).toFixed(0)}%`}><span>{v >= 0.09 ? <Count value={v * 100} suffix="%" /> : ""}</span></div>)}
     </div>
   );
 }
@@ -100,7 +103,7 @@ const LIVE = { inprogress: ["danger", "Live"], postponed: ["warning", "Postponed
 export function MatchRow({ m, byId, onOpen }) {
   const st = LIVE[m.s], H = byId[m.h], A = byId[m.a], p = usePhase(m);
   return (
-    <button type="button" className="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3" title="Open match" onClick={() => onOpen({ h: m.h, a: m.a, league: m.league ?? H?.league, id: m.id, t: m.t, hg: m.hg, ag: m.ag, s: m.s, r: m.r, rn: m.rn, g: m.g })}>
+    <button type="button" data-mid={m.id} className="list-group-item list-group-item-action d-flex align-items-center gap-2 py-3" title="Open match" onClick={(e) => onOpen({ h: m.h, a: m.a, league: m.league ?? H?.league, id: m.id, t: m.t, hg: m.hg, ag: m.ag, s: m.s, r: m.r, rn: m.rn, g: m.g }, e.currentTarget)}>
       <span className="side d-flex align-items-center justify-content-end gap-2 text-end"><span className="fw-medium text-truncate">{H?.name ?? "?"}</span><Crest team={H} /></span>
       <span className="match-mid text-center">
         <PhaseMid m={m} p={p} st={st} />
@@ -169,13 +172,13 @@ export function MatchList({ fixtures, results, team, byId, onOpen, pageSize = 15
 
 // Circular probability gauge
 export function Ring({ value, label, color, size = 96 }) {
-  const r = 38, c = 2 * Math.PI * r, v = Math.min(1, Math.max(0, value));
+  const r = 38, c = 2 * Math.PI * r, v = Math.min(1, Math.max(0, value)), on = useEntered();   // the arc fills from empty on first draw
   return (
     <div className="ring text-center" style={{ maxWidth: size }}>
       <svg viewBox="0 0 100 100" className="ring-svg" role="img" aria-label={`${label} ${Math.round(v * 100)}%`}>
         <circle cx="50" cy="50" r={r} className="ring-bg" />
-        <circle cx="50" cy="50" r={r} className="ring-fg" style={{ stroke: color }} strokeDasharray={c} strokeDashoffset={c * (1 - v)} transform="rotate(-90 50 50)" />
-        <text x="50" y="57" textAnchor="middle" className="ring-num">{Math.round(v * 100)}%</text>
+        <circle cx="50" cy="50" r={r} className="ring-fg" style={{ stroke: color }} strokeDasharray={c} strokeDashoffset={c * (1 - (on ? v : 0))} transform="rotate(-90 50 50)" />
+        <text x="50" y="57" textAnchor="middle" className="ring-num"><Count value={v * 100} suffix="%" /></text>
       </svg>
       <div className="ring-label">{label}</div>
     </div>
@@ -189,8 +192,8 @@ export function Spark({ matches, color }) {
   const W = 140, H = 44, pad = 6, x = (i) => pad + (i * (W - 2 * pad)) / (pts.length - 1), y = (v) => H - pad - (v / 3) * (H - 2 * pad);
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="spark" role="img" aria-label="Form trend">
-      <path d={pts.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ")} fill="none" style={{ stroke: color }} strokeWidth="2" />
-      {pts.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r="3" style={{ fill: color }} />)}
+      <path d={pts.map((v, i) => `${i ? "L" : "M"}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(" ")} pathLength="1" fill="none" style={{ stroke: color }} strokeWidth="2" />
+      {pts.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r="3" style={{ fill: color, "--i": i }} />)}
     </svg>
   );
 }

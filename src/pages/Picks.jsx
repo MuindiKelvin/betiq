@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { deleteDoc, doc, updateDoc } from "firebase/firestore";
 import { Alert, Badge, Button, Card, Col, Form, ListGroup, Row } from "react-bootstrap";
 import { db } from "../lib/firebase";
@@ -11,6 +11,10 @@ import { buildReceipts, dayKey, downloadReceipt, money } from "../lib/receipts";
 import { RECENT_DAYS, groupFinished, groupKeys, holds } from "../lib/grouping";
 import { shiftDay } from "../lib/board";
 import { Pager, SearchBox, Spin, Stat, hit, usePaged } from "../components/ui";
+import { Count } from "../components/Motion";
+import ReceiptPreview from "../components/ReceiptPreview";
+import { useToast } from "../components/Toasts";
+import { reducedMotion } from "../lib/motion";
 
 // Inline form to add or change the numbers on an open pick: odds, stake, your own probability. onSave resolves to an error message or null.
 function EditForm({ p, onSave, onCancel }) {
@@ -34,9 +38,22 @@ function EditForm({ p, onSave, onCancel }) {
   );
 }
 
-function PickLine({ p, lg, dense, canEdit, editing, onEdit, onSave, onReanalyze, onRemove }) {
+function PickLine({ p, lg, dense, canEdit, editing, flash, leaving, onGone, onEdit, onSave, onReanalyze, onRemove }) {
+  // flash: "won" | "lost" for a moment after the pick settled while the page was open (decided in Picks, so it survives the receipt moving from Ongoing to Finished)
+  const settle = { on: !!flash, n: flash ?? "" };
+  // a deleted pick collapses to nothing, then leaves the list (onGone)
+  const ref = useRef(null), fired = useRef(false);
+  useEffect(() => {
+    if (!leaving) return undefined;
+    const el = ref.current, done = () => { if (!fired.current) { fired.current = true; onGone(p.id); } };
+    if (!el || reducedMotion()) { done(); return undefined; }
+    el.style.height = el.offsetHeight + "px"; el.style.overflow = "hidden"; void el.offsetHeight; el.classList.add("pick-leave");
+    const t = setTimeout(done, 340);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaving]);
   return (
-    <ListGroup.Item className={"d-flex align-items-center gap-3 flex-wrap " + (dense ? "py-2" : "py-3")}>
+    <ListGroup.Item ref={ref} className={"d-flex align-items-center gap-3 flex-wrap " + (dense ? "py-2" : "py-3") + (flash ? " settle-" + flash : "")}>
       <div className="flex-fill" style={{ minWidth: 180 }}>
         <div className="fw-medium">{p.home} vs {p.away}</div>
         {lg && <div className="small text-body-secondary"><i className="bi bi-trophy me-1" />{lg.name}{p.v !== 3 && <Badge bg="secondary" className="ms-2">Legacy</Badge>}{String(p.id).startsWith("a_") && <Badge bg="primary" text="dark" className="ms-2" title="Confirmed from Daily Picks">Daily pick</Badge>}</div>}
@@ -44,7 +61,7 @@ function PickLine({ p, lg, dense, canEdit, editing, onEdit, onSave, onReanalyze,
       <div className="text-end"><div>{pickLabel(p)}</div><div className="small text-body-secondary">{MARKETS[pickMarket(p)]?.label}{p.prob != null && ` · ${pct(p.prob)}`}</div></div>
       {p.odds && <div className="text-end small"><div>@ {p.odds.toFixed(2)}</div>{p.stake && <div className="text-body-secondary">stake {p.stake}</div>}</div>}
       <div className="text-end" style={{ minWidth: 130 }}>
-        {p.won != null ? <><Badge bg={p.won ? "success" : "danger"}>{p.score} · FT · {p.won ? "Won" : "Lost"}</Badge>{p.profit != null && <div className={"small " + (p.profit >= 0 ? "text-success" : "text-danger")}>{money(p.profit)}</div>}</>
+        {p.won != null ? <><Badge key={settle.n} bg={p.won ? "success" : "danger"} className={settle.on ? "badge-flip" : undefined}>{p.score} · FT · {p.won ? "Won" : "Lost"}</Badge>{p.profit != null && <div className={"small " + (p.profit >= 0 ? "text-success" : "text-danger")}>{money(p.profit)}</div>}</>
           : p.live ? <><Badge bg="danger" className={p.liveStale ? "opacity-50" : ""}>{minuteLabel(p.live.min) ?? "Live"} · {p.live.hg ?? "–"}–{p.live.ag ?? "–"}</Badge><div className="tiny text-body-secondary">in play</div></>
           : p.wait === "overdue" || p.wait === "left" ? <><Badge bg="warning" text="dark">Awaiting result</Badge><div className="tiny text-body-secondary">kick-off passed</div></>
           : p.wait ? <Badge bg="warning" text="dark">{p.wait === "postponed" ? "Postponed" : p.wait === "cancelled" ? "Cancelled" : p.raw ?? "Disrupted"}</Badge>
@@ -77,7 +94,7 @@ function DayStrip({ list, onJump }) {
 }
 
 // One match day. The header is a one-line summary that opens and closes the day; the picks (8 per page) are inside.
-function Receipt({ r, d, who, open, onToggle, renderPick }) {
+function Receipt({ r, d, who, open, onToggle, onPreview, renderPick }) {
   const [saved, setSaved] = useState(false), name = (c) => d.byCode[c]?.name ?? null, pg = usePaged(r.picks, 8, r.key), rate = r.settled ? r.won / r.settled : null;
   const key = (e) => { if (e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onToggle(); } };
   return (
@@ -88,6 +105,7 @@ function Receipt({ r, d, who, open, onToggle, renderPick }) {
         {rate != null && <div className="d-flex align-items-center gap-2 small text-body-secondary" title={`${pct(rate)} hit rate`}>Won <strong className="text-body">{r.won}/{r.settled}</strong><div className="hit-bar"><span className={"bg-" + tone(r)} style={{ width: `${Math.round(rate * 100)}%` }} /></div></div>}
         {r.profit != null && <strong className={"small " + (r.profit >= 0 ? "text-success" : "text-danger")}>{money(r.profit)}</strong>}
         <Badge bg={r.open ? "warning" : "success"} text={r.open ? "dark" : undefined}>{r.open ? `Ongoing · ${r.openCount} pending` : "Finished"}</Badge>
+        <Button size="sm" variant="outline-secondary" aria-label="Preview receipt" title="Preview the receipt before downloading" onClick={(e) => { e.stopPropagation(); onPreview(r); }}><i className="bi bi-eye me-1" aria-hidden="true" />Preview</Button>
         <Button size="sm" variant="outline-secondary" onClick={(e) => { e.stopPropagation(); downloadReceipt(r, { leagueName: name, who }); setSaved(true); setTimeout(() => setSaved(false), 1800); }}><i className={"bi me-1 " + (saved ? "bi-check2 text-success pop" : "bi-download")} aria-hidden="true" />{saved ? "Downloaded" : "Download"}</Button>
       </Card.Header>
       {open && <div className="expand">
@@ -124,25 +142,42 @@ function Group({ g, open, onToggle, children }) {
 }
 
 export default function Picks({ user, d, history, nav }) {
-  const [saved, setSaved] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState(""), [opened, setOpened] = useState({}), [editId, setEditId] = useState(null), { doc: liveDoc, finals, nowMs } = useLive();
+  const [saved, setSaved] = useState(null), [err, setErr] = useState(null), [q, setQ] = useState(""), [opened, setOpened] = useState({}), [editId, setEditId] = useState(null), [leaving, setLeaving] = useState(null), [preview, setPreview] = useState(null), { doc: liveDoc, finals, nowMs } = useLive(), toast = useToast();
   // The live feed settles a pick the moment the API reports its match finished (no waiting for the data sync); a synced result, once present, wins.
   const rows = useMemo(() => saved && saved.map((p) => pickWithLive(p, p.v === 3 && p.matchId ? phaseOf({ id: p.matchId, t: p.t }, liveDoc, nowMs, finals) : null)), [saved, liveDoc, finals, nowMs]);
   useEffect(() => { loadPicks(user.uid).then(setSaved).catch((e) => setErr(e.message)); }, [user, d]);
 
+  // the row collapses first (PickLine), then it is taken out of the list; the timer is a safety net for a row that is no longer on screen
+  const finish = (id) => { setSaved((r) => r && r.filter((p) => p.id !== id)); setLeaving((l) => (l === id ? null : l)); };
+  useEffect(() => { if (!leaving) return undefined; const t = setTimeout(() => finish(leaving), 800); return () => clearTimeout(t); }, [leaving]);   // eslint-disable-line react-hooks/exhaustive-deps
   async function remove(id) {
-    try { await deleteDoc(doc(db, "users", user.uid, "picks", id)); setSaved((r) => r.filter((p) => p.id !== id)); } catch (e) { setErr(e.message); }
+    if (leaving === id) return;
+    try { await deleteDoc(doc(db, "users", user.uid, "picks", id)); setLeaving(id); toast.push({ text: "Pick deleted", tone: "info" }); } catch (e) { setErr(e.message); }
   }
   // Edit odds / stake / own % of an open pick (firestore.rules: only these four fields, only before kick-off). Resolves to an error message or null.
   async function update(id, patch) {
     try {
       await updateDoc(doc(db, "users", user.uid, "picks", id), { odds: patch.odds, stake: patch.stake, myProb: patch.myProb, mktProb: patch.mktProb });
-      setSaved((r) => r.map((p) => (p.id === id ? { ...p, ...patch } : p))); setEditId(null); return null;
+      setSaved((r) => r.map((p) => (p.id === id ? { ...p, ...patch } : p))); setEditId(null); toast.push({ text: "Changes saved" }); return null;
     } catch (e) { return e.code === "permission-denied" ? "Could not save: the match has probably started, or the updated rules are not deployed yet." : "Could not save: " + e.message; }
   }
   const who = user.displayName || user.email || "", all = rows ?? [], done = all.filter((r) => r.won != null), won = (l) => l.filter((r) => r.won).length;
   const staked = done.filter((r) => r.profit != null), stakedSum = staked.reduce((s, r) => s + r.stake, 0), profit = staked.reduce((s, r) => s + r.profit, 0);
   // one receipt per match day: open ones (a pick still unsettled) are "Ongoing", the rest "Finished", each listed under its date
   const receipts = useMemo(() => buildReceipts(rows ?? []), [rows]);
+  // a pick that was pending and now has a result, while this page is open: flagged for a couple of seconds (the first load and new picks never are)
+  const seen = useRef(null), [flash, setFlash] = useState({}), flashTimers = useRef([]);
+  useEffect(() => {
+    if (!rows) return;
+    const prev = seen.current; seen.current = new Map(rows.map((r) => [r.id, r.won]));
+    if (!prev) return;
+    const hit = rows.filter((r) => prev.has(r.id) && prev.get(r.id) == null && typeof r.won === "boolean");
+    if (!hit.length) return;
+    setFlash((f) => ({ ...f, ...Object.fromEntries(hit.map((r) => [r.id, r.won ? "won" : "lost"])) }));
+    const t = setTimeout(() => setFlash((f) => { const n = { ...f }; hit.forEach((r) => delete n[r.id]); return n; }), 2300);
+    flashTimers.current.push(t);
+  }, [rows]);
+  useEffect(() => () => flashTimers.current.forEach(clearTimeout), []);
   const pool = history ? receipts.filter((r) => !r.open && r.settled) : receipts;
   const match = (r) => !q.trim() || r.picks.some((p) => hit(q, `${p.home} ${p.away} ${d.byCode[p.league]?.name ?? ""} ${pickLabel(p)} ${r.id} ${dayLabel(r.t)} ${dmy(r.t)}`));
   const ongoing = pool.filter((r) => r.open && match(r)), finished = pool.filter((r) => !r.open && match(r));
@@ -160,19 +195,19 @@ export default function Picks({ user, d, history, nav }) {
     setOpened((o) => ({ ...o, [key]: true }));
     setTimeout(() => document.getElementById("r-" + key)?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
   };
-  const renderPick = (p) => <PickLine key={p.id} p={p} lg={d.byCode[p.league]} dense canEdit={canEditPick(p, nowMs)} editing={editId === p.id} onEdit={setEditId} onSave={update} onRemove={remove} onReanalyze={(x) => nav?.analyze({ league: x.league, h: x.homeId, a: x.awayId })} />;
+  const renderPick = (p) => <PickLine key={p.id} p={p} lg={d.byCode[p.league]} dense canEdit={canEditPick(p, nowMs)} editing={editId === p.id} flash={flash[p.id]} leaving={leaving === p.id} onGone={finish} onEdit={setEditId} onSave={update} onRemove={remove} onReanalyze={(x) => nav?.analyze({ league: x.league, h: x.homeId, a: x.awayId })} />;
   const renderNode = (n) => n.type === "day"
-    ? <Receipt key={n.r.key} r={n.r} d={d} who={who} open={isOpen(n.r)} onToggle={() => toggle(n.r)} renderPick={renderPick} />
+    ? <Receipt key={n.r.key} r={n.r} d={d} who={who} open={isOpen(n.r)} onToggle={() => toggle(n.r)} onPreview={setPreview} renderPick={renderPick} />
     : <Group key={n.key} g={n} open={isGroupOpen(n)} onToggle={() => toggleGroup(n)}>{n.children.map(renderNode)}</Group>;
   const group = (keyFn, keys) => keys.map((k) => [k, done.filter((r) => keyFn(r) === k)]).filter(([, l]) => l.length);
-  const tiles = [["Saved", all.length], ["Settled", done.length], ["Hit rate", done.length ? pct(won(done) / done.length) : "n/a"],
-    ...(staked.length ? [["Profit (units)", money(profit)], ["ROI", stakedSum ? pct(profit / stakedSum, 1) : "n/a"]] : [])];
+  const tiles = [["Saved", <Count value={all.length} />], ["Settled", <Count value={done.length} />], ["Hit rate", done.length ? <Count value={(won(done) / done.length) * 100} suffix="%" /> : "n/a"],
+    ...(staked.length ? [["Profit (units)", <Count value={profit} format={money} />], ["ROI", stakedSum ? <Count value={profit / stakedSum} format={(v) => pct(v, 1)} /> : "n/a"]] : [])];
 
   return (
     <div className="d-flex flex-column gap-3">
       <h1 className="h3 mb-0">{history ? "Prediction history" : "My Picks"}</h1>
       {err && <Alert variant="danger" className="mb-0">{err}</Alert>}
-      {!rows && !err && <Spin />}
+      {!rows && !err && <Spin kind="matches" rows={5} />}
       <Row className="g-3">{tiles.map(([l, v]) => <Col xs={6} md key={l}><Card><Card.Body><Stat value={v} label={l} /></Card.Body></Card></Col>)}</Row>
       {history && done.length > 0 && (
         <Row className="g-3">
@@ -182,7 +217,8 @@ export default function Picks({ user, d, history, nav }) {
         </Row>)}
       {pool.length > 0 && <SearchBox value={q} onChange={setQ} placeholder="Search team, league, pick or date" style={{ maxWidth: 340 }} />}
       {rows && !ongoing.length && !finished.length && <Alert variant="secondary" className="mb-0">{pool.length ? "No receipts match your search." : history ? "No settled picks yet. A pick settles as soon as its match is reported finished." : "No picks yet. Analyze a match and tap “Save to My Picks”."}</Alert>}
-      {ongoing.length > 0 && <><h2 className="h5 mb-0"><i className="bi bi-broadcast me-2 text-primary" />Ongoing</h2>{pgO.slice.map((r) => <Receipt key={r.key} r={r} d={d} who={who} open={isOpen(r)} onToggle={() => toggle(r)} renderPick={renderPick} />)}<Pager page={pgO.page} pages={pgO.pages} onChange={pgO.setPage} /></>}
+      {ongoing.length > 0 && <><h2 className="h5 mb-0"><i className="bi bi-broadcast me-2 text-primary" />Ongoing</h2>{pgO.slice.map((r) => <Receipt key={r.key} r={r} d={d} who={who} open={isOpen(r)} onToggle={() => toggle(r)} onPreview={setPreview} renderPick={renderPick} />)}<Pager page={pgO.page} pages={pgO.pages} onChange={pgO.setPage} /></>}
+      <ReceiptPreview receipt={preview} opts={{ leagueName: (c) => d.byCode[c]?.name ?? null, who }} onHide={() => setPreview(null)} />
       {finished.length > 0 && <>
         <div className="d-flex align-items-center gap-2 flex-wrap">
           {!history && <h2 className="h5 mb-0 me-auto"><i className="bi bi-check2-circle me-2 text-primary" />Finished <span className="small text-body-secondary fw-normal">{finished.length} day{finished.length > 1 ? "s" : ""}</span></h2>}

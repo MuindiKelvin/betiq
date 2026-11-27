@@ -21,7 +21,10 @@ import MatchView from "./pages/MatchView";
 import Profile from "./pages/Profile";
 import Help from "./pages/Help";
 import Credit from "./components/Credit";
-import { GlobalSearch, MenuButton, MobileNav, SideNav } from "./components/Shell";
+import { GlobalSearch, HelpButton, MenuButton, MobileNav, SideNav, TABS } from "./components/Shell";
+import { ToastProvider } from "./components/Toasts";
+import { ShortcutsProvider, useHotkeys } from "./components/Shortcuts";
+import { morph, visibleRow } from "./lib/vt";
 
 const FEATURES = [
   ["arrow-left-right", "Head-to-head", "Every past meeting across five seasons, with goals, BTTS and over/under tendencies."],
@@ -49,7 +52,12 @@ function Login({ onError, err }) {
   );
 }
 
+// the providers wrap the app so every page can show toasts and register keyboard shortcuts
 export default function App() {
+  return <ToastProvider><ShortcutsProvider><Main /></ShortcutsProvider></ToastProvider>;
+}
+
+function Main() {
   const [user, setUser] = useState(undefined), [tab, setTab] = useState("explore"), [mode, setMode] = useState("browse"), [menu, setMenu] = useState(false);   // mode: Explore shows "browse" (competitions) or "analyze" (match analysis)
   const [comp, setComp] = useState(null), [compTab, setCompTab] = useState("overview");          // selected competition + its tab
   const [team, setTeam] = useState(null), [player, setPlayer] = useState(null), [ent, setEnt] = useState(null), [view, setView] = useState(null), [pre, setPre] = useState(null);
@@ -70,9 +78,6 @@ export default function App() {
     })();
   }, [user]);
 
-  if (user === undefined) return <Backdrop />;
-  if (!user) return <Login onError={setErr} err={err} />;
-
   // navigation: detail pages (match > player > team) sit on top of the current page; sidebar clicks clear them
   const clear = () => { setView(null); setPlayer(null); setTeam(null); setEnt(null); setPre(null); window.scrollTo({ top: 0 }); };
   const nav = {
@@ -81,10 +86,23 @@ export default function App() {
     person: (e) => { setView(null); setPlayer(null); setEnt(e); window.scrollTo({ top: 0 }); },   // { kind: "manager" | "referee" | "venue", id, code, name, row }
     player: (p) => { setEnt(null); setPlayer(p); window.scrollTo({ top: 0 }); },
     analyze: (p) => { clear(); setPre(p ?? null); setMode("analyze"); setTab("explore"); },
-    open: (m) => { window.scrollTo({ top: 0 }); setView(m); },   // every match (played or upcoming) opens the match page
+    // every match (played or upcoming) opens the match page; `from` (the clicked row) lets its crests and score glide into the page header (View Transitions API)
+    open: (m, from) => morph(() => { window.scrollTo({ top: 0 }); setView(m); }, { from }),
+  };
+  const closeMatch = () => morph(() => setView(null), { from: document.querySelector(".match-head"), to: () => visibleRow(view?.id) });
+  // one step back, the same order the pages are stacked in: match > manager/referee/venue > player > team > competition. false = nothing to go back to
+  const back = () => {
+    if (view) closeMatch(); else if (ent) setEnt(null); else if (player) setPlayer(null); else if (team) setTeam(null);
+    else if (tab === "explore" && mode === "browse" && comp) setComp(null);
+    else return false;
+    return undefined;
   };
   const go = (k) => { if (k === "explore" && tab === "explore") { setComp(null); setMode("browse"); } clear(); setTab(k); };   // the sidebar entry of the current page returns to its start
   const out = () => signOut(auth);
+  // keyboard: 1..7 open the sidebar pages, Esc / B go back (letters never fire while typing; see components/Shortcuts.jsx)
+  useHotkeys(user && d ? { ...Object.fromEntries(TABS.map(([k], i) => [String(i + 1), () => go(k)])), Escape: back, b: back } : {});
+  if (user === undefined) return <Backdrop />;
+  if (!user) return <Login onError={setErr} err={err} />;
   const page = d && ({
     explore: (
       <Explore mode={mode} showSwitch={mode === "analyze" || !comp} onMode={(m) => { if (m === mode) return; clear(); if (m === "browse") setComp(null); setMode(m); }}>
@@ -97,7 +115,7 @@ export default function App() {
     help: <Help />,
   }[tab] ?? <Picks key={tab} user={user} d={d} nav={nav} history={tab === "history"} />);
   const Page = { manager: Manager, referee: Referee, venue: Venue }[ent?.kind];
-  const top = d && (view ? <MatchView key={view.id} m={view} d={d} user={user} onBack={() => setView(null)} nav={nav} />
+  const top = d && (view ? <MatchView key={view.id} m={view} d={d} user={user} onBack={closeMatch} nav={nav} />
     : ent && Page ? <Page key={`${ent.kind}-${ent.id}`} ent={ent} d={d} nav={nav} onBack={() => setEnt(null)} />
     : player ? <Player key={player.id} player={player} d={d} nav={nav} onBack={() => setPlayer(null)} />
     : team ? <Team key={`${team.id}-${team.code}`} team={team} d={d} nav={nav} onBack={() => setTeam(null)} /> : page);
@@ -113,12 +131,13 @@ export default function App() {
           <div className="d-flex align-items-center gap-2 gap-md-3 px-3 py-2">
             <MenuButton onClick={() => setMenu(true)} />
             {d ? <GlobalSearch d={d} onTeam={(t) => nav.team(t.id, t.league)} onComp={(c) => nav.comp(c)} /> : <span className="flex-fill" />}
+            <HelpButton />
             <span className="brand d-lg-none">Bet<span>IQ</span></span>
           </div>
         </header>
         <Container fluid="xl" as="main" className="py-4 px-3 px-md-4">
           {err && <Alert variant="danger">{err}</Alert>}
-          {!d && !err && <Spin />}
+          {!d && !err && <Spin kind="cards" />}
           {d && !d.entries.length && <Alert variant="info">No data yet. Run <code>npm run sync:local</code> (see README).</Alert>}
           {d && d.entries.length > 0 && <div key={[tab, view?.id, ent && ent.kind + ent.id, player?.id, team && team.id + "-" + team.code].join("|")} className="page-in">{top}</div>}
           <p className="small text-body-secondary text-center mt-5 mb-0">

@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { doc, serverTimestamp, setDoc } from "firebase/firestore";
-import { Accordion, Alert, Button, Card, Col, Nav, Row } from "react-bootstrap";
+import { Accordion, Alert, Button, Card, Col, Row } from "react-bootstrap";
 import { auth, db } from "../lib/firebase";
 import { fresh } from "../lib/data";
 import { ageOf, first, fmtVal, humanize } from "../lib/util";
 import DataTable from "../components/DataTable";
+import { SlideNav } from "../components/SlideNav";
 import { Crest, PlayerPhoto, Spin } from "../components/ui";
 import { useEffect } from "react";
 
@@ -52,7 +53,7 @@ export default function Player({ player, d, nav, onBack }) {
           <Button variant="primary" disabled={st.queued || st.busy} onClick={request}>{st.queued ? "Requested" : "Load full profile"}</Button>
         </Card.Body></Card>)}
       {pack && (<>
-        <Nav className="nav-underline flex-nowrap overflow-auto comp-tabs" activeKey={tab} onSelect={setTab}>{[["career", `Career (${pack.career.length})`], ["transfers", `Transfers (${pack.transfers.length})`], ["log", `Recent matches (${pack.log.length})`]].map(([k, l]) => <Nav.Item key={k}><Nav.Link eventKey={k}>{l}</Nav.Link></Nav.Item>)}</Nav>
+        <SlideNav items={[["career", `Career (${pack.career.length})`], ["transfers", `Transfers (${pack.transfers.length})`], ["log", `Recent matches (${pack.log.length})`]].map(([key, label]) => ({ key, label }))} activeKey={tab} onSelect={setTab} />
         <Card><Card.Body>
           {tab === "career" && <DataTable rows={pack.career} pref={[["season", "season_name", "year"], ["team", "team_name"], ["league", "league_name", "competition"], "matches", "goals", "assists"]} max={8} empty="No career data." />}
           {tab === "transfers" && <DataTable rows={pack.transfers} pref={[["date", "transfer_date"], ["from_team", "from_team_name"], ["to_team", "to_team_name"], ["fee", "fee_eur", "amount"], ["type", "transfer_type"]]} max={6} empty="No transfers recorded." />}
